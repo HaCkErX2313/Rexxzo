@@ -1,0 +1,37 @@
+    # Git
+.git/
+.gitignore
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+
+# Build artifacts
+target/
+build/
+bin/
+
+# Environment files & Secrets (CRITICAL: Never bake secrets into image)
+.env
+.env.*
+*.env
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# System / OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# Scratch scripts
+scratch/

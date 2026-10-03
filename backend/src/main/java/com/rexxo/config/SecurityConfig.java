@@ -82,9 +82,21 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        java.util.List<String> patterns = new java.util.ArrayList<>(Arrays.asList(allowedOrigins.split(",")));
-        patterns.add("http://localhost:*");
-        patterns.add("http://127.0.0.1:*");
+        java.util.List<String> patterns = new java.util.ArrayList<>();
+        if (allowedOrigins != null) {
+            for (String origin : allowedOrigins.split(",")) {
+                String trimmed = origin.trim();
+                if (!trimmed.isEmpty() && !patterns.contains(trimmed)) {
+                    patterns.add(trimmed);
+                }
+            }
+        }
+        if (!patterns.contains("http://localhost:*")) {
+            patterns.add("http://localhost:*");
+        }
+        if (!patterns.contains("http://127.0.0.1:*")) {
+            patterns.add("http://127.0.0.1:*");
+        }
         config.setAllowedOriginPatterns(patterns);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
