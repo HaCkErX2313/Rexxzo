@@ -49,6 +49,11 @@ public class GlobalExceptionHandler {
         return buildError(HttpStatus.FORBIDDEN, "Access denied");
     }
 
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        return buildError(HttpStatus.METHOD_NOT_ALLOWED, "HTTP method '" + ex.getMethod() + "' is not supported for this endpoint. Please use " + ex.getSupportedHttpMethods() + ".");
+    }
+
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
     public ResponseEntity<ErrorResponse> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
         return buildError(HttpStatus.NOT_FOUND, "Resource not found: " + ex.getResourcePath());
