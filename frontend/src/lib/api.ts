@@ -1,6 +1,11 @@
 import { Product, Category, Cart, CartItem, WishlistItem, Order, User, Review, Coupon } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+const isClient = typeof window !== 'undefined';
+const isLocalhost = isClient && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+const API_BASE_URL = 
+  process.env.NEXT_PUBLIC_API_URL || 
+  (isLocalhost ? 'http://localhost:8080/api' : 'https://rexxzo-backend.onrender.com/api');
 
 // Initial curated demo products showcasing REXXZO aesthetics
 export const DEMO_CATEGORIES: Category[] = [
