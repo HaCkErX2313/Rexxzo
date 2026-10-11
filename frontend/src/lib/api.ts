@@ -9,13 +9,13 @@ const API_BASE_URL =
 
 // Initial curated demo products showcasing REXXZO aesthetics
 export const DEMO_CATEGORIES: Category[] = [
-  { id: 1, name: 'Home Decor', slug: 'home-decor', description: 'Handcrafted ceramic vessels and sculptural essentials', itemCount: 12, imageUrl: '/images/desk_lamp.jpg' },
+  { id: 1, name: 'Home Decor', slug: 'home-decor', description: 'Handcrafted ceramic vessels and sculptural essentials', itemCount: 12, imageUrl: '/images/homedec.png' },
   { id: 2, name: 'Kitchen & Dining', slug: 'kitchen-dining', description: 'Minimalist drinkware and artisanal dining ware', itemCount: 8, imageUrl: '/images/water_bottle.jpg' },
-  { id: 3, name: 'Storage & Organizers', slug: 'storage-organizers', description: 'Functional architectural organization for calm spaces', itemCount: 6, imageUrl: '/images/storage_box.jpg' },
-  { id: 4, name: 'Lighting', slug: 'lighting', description: 'Atmospheric dimmable lighting with tactile materiality', itemCount: 5, imageUrl: '/images/desk_lamp.jpg' },
+  { id: 3, name: 'Storage & Organizers', slug: 'storage-organizers', description: 'Functional architectural organization for calm spaces', itemCount: 6, imageUrl: '/images/storagebanner.avif' },
+  { id: 4, name: 'Lighting', slug: 'lighting', description: 'Atmospheric dimmable lighting with tactile materiality', itemCount: 5, imageUrl: '/images/lightbanner.png' },
   { id: 5, name: 'Lifestyle', slug: 'lifestyle', description: 'Acoustic fidelity wrapped in soft tactile aluminum', itemCount: 7, imageUrl: '/images/headphones.jpg' },
   { id: 6, name: 'Accessories', slug: 'accessories', description: 'Refined daily essentials for your workspace and home', itemCount: 9, imageUrl: '/images/hero_banner.jpg' },
-  { id: 7, name: 'Gift Corner', slug: 'gift-corner', description: 'Thoughtful gifts for every occasion. Curated design objects, sculptural lighting, and artisanal lifestyle essentials.', itemCount: 10, imageUrl: '/images/hero_banner.jpg' },
+  { id: 7, name: 'Gift Corner', slug: 'gift-corner', description: 'Thoughtful gifts for every occasion. Curated design objects, sculptural lighting, and artisanal lifestyle essentials.', itemCount: 10, imageUrl: '/images/homedecor.png' },
 ];
 
 export const DEMO_PRODUCTS: Product[] = [
