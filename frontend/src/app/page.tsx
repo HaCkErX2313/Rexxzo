@@ -15,7 +15,9 @@ export default async function HomePage() {
   ]);
 
   const featuredProducts = products.filter(p => p.isFeatured).slice(0, 4);
-  const trendingProducts = products.slice(2, 6);
+  const trendingProducts = products
+  .filter(p => !p.isFeatured)
+  .slice(0, 4);
 
   return (
     <div className="space-y-16 sm:space-y-24">
