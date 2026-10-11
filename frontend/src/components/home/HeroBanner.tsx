@@ -9,14 +9,16 @@ export default function HeroBanner() {
   return (
     <section className="relative w-full h-[85vh] min-h-[580px] max-h-[820px] bg-[#080808] overflow-hidden flex items-center">
       {/* Background Image */}
-      <Image
-        src="/images/hero_banner.jpg"
-        alt="REXXZO Curated Lifestyle Interior"
-        fill
-        priority
-        className="object-cover object-center opacity-65 scale-102 transition-transform duration-1000 ease-out"
-        sizes="100vw"
-      />
+      
+<Image
+  src="/images/herobanner.png"
+  alt="REXXZO Premium Home Decor"
+  fill
+  priority
+  className="object-cover object-center opacity-65 scale-102 transition-transform duration-1000 ease-out"
+  sizes="100vw"
+/>
+
 
       {/* Dark Vignette and Gradient Overlay */}
       <div className="absolute inset-0 bg-gradient-to-r from-[#080808]/95 via-[#080808]/65 to-transparent" />
