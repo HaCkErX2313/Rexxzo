@@ -192,7 +192,7 @@ export default function Footer() {
         <div className="pt-8 flex flex-col md:flex-row items-center justify-between text-xs text-[#666666] gap-4">
           <p>© {new Date().getFullYear()} REXXZO. All rights reserved. Better Everyday.</p>
           <div className="flex items-center space-x-6 text-[#999999]">
-            <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className="hover:text-[#C8BCA7] transition-colors" aria-label="Instagram">
+            <a href="https://www.instagram.com/rexxzo.in?dlrf=ZHptanRvOXJxYmR0&utm_source=qr" target="_blank" rel="noopener noreferrer" className="hover:text-[#C8BCA7] transition-colors" aria-label="Instagram">
               <svg className="w-4 h-4 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
                 <rect width="20" height="20" x="2" y="2" rx="5" ry="5"></rect>
                 <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
