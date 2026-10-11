@@ -9,7 +9,7 @@ const API_BASE_URL =
 
 // Initial curated demo products showcasing REXXZO aesthetics
 export const DEMO_CATEGORIES: Category[] = [
-  { id: 1, name: 'Home Decor', slug: 'home-decor', description: 'Handcrafted ceramic vessels and sculptural essentials', itemCount: 12, imageUrl: '/images/homedec.png' },
+  { id: 1, name: 'Home Decor', slug: 'home-decor', description: 'Handcrafted ceramic vessels and sculptural essentials', itemCount: 12, imageUrl: '/images/homedec.jpg' },
   { id: 2, name: 'Kitchen & Dining', slug: 'kitchen-dining', description: 'Minimalist drinkware and artisanal dining ware', itemCount: 8, imageUrl: '/images/water_bottle.jpg' },
   { id: 3, name: 'Storage & Organizers', slug: 'storage-organizers', description: 'Functional architectural organization for calm spaces', itemCount: 6, imageUrl: '/images/storagebanner.avif' },
   { id: 4, name: 'Lighting', slug: 'lighting', description: 'Atmospheric dimmable lighting with tactile materiality', itemCount: 5, imageUrl: '/images/lightbanner.png' },
