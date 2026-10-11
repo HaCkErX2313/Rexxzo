@@ -9,6 +9,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/admin', '/admin/', '/admin/*', '/account', '/checkout', '/orders/'],
       },
     ],
-    sitemap: 'https://rexxo.com/sitemap.xml',
+    sitemap: 'https://rexxzo.com/sitemap.xml',
   };
 }
