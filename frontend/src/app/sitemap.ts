@@ -2,7 +2,7 @@ import { MetadataRoute } from 'next';
 import { DEMO_CATEGORIES, DEMO_PRODUCTS } from '@/lib/api';
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://rexxo.in';
+  const baseUrl = 'https://rexxo.com';
 
   // Core static pages
   const staticRoutes: MetadataRoute.Sitemap = [
