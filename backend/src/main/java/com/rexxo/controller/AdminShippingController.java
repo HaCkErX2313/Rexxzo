@@ -41,25 +41,35 @@ public class AdminShippingController {
      */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> shiprocketStatus() {
-        boolean configured = shiprocketConfig.isConfigured();
-        boolean healthy = false;
-        String message = "Shiprocket credentials not configured";
+        Map<String, Object> status = shiprocketService.testAuthentication();
+        return ResponseEntity.ok(status);
+    }
 
-        if (configured) {
-            try {
-                healthy = shiprocketService.isHealthy();
-                message = healthy ? "Authentication OK" : "Authentication failed";
-            } catch (Exception e) {
-                message = "Error: " + e.getMessage();
-            }
-        }
-
+    /**
+     * GET /api/admin/shipping/pickup-locations
+     * Lists pickup locations configured in Shiprocket for verification.
+     */
+    @GetMapping("/pickup-locations")
+    public ResponseEntity<?> getPickupLocations() {
+        com.fasterxml.jackson.databind.JsonNode locations = shiprocketService.getPickupLocations();
         return ResponseEntity.ok(Map.of(
-            "configured", configured,
-            "authentication", healthy ? "OK" : "FAILED",
-            "message", message,
-            "baseUrl", shiprocketConfig.getBaseUrl()
+            "configuredLocation", shiprocketConfig.getPickupLocation(),
+            "pickupPincode", shiprocketConfig.getPickupPincode(),
+            "locations", locations != null ? locations : Map.of()
         ));
+    }
+
+    /**
+     * POST /api/admin/shipping/shipments/{shipmentId}/assign-courier
+     * Assigns courier and generates AWB for an existing shipment.
+     */
+    @PostMapping("/shipments/{shipmentId}/assign-courier")
+    public ResponseEntity<ShippingDtos.CreateShipmentResponse> assignCourier(
+            @PathVariable Long shipmentId,
+            @RequestBody Map<String, Integer> body) {
+        Integer courierId = body.get("courierId");
+        ShippingDtos.CreateShipmentResponse response = shiprocketService.assignCourier(shipmentId, courierId);
+        return ResponseEntity.ok(response);
     }
 
     // ─── Create / Retry Shipment ─────────────────────────────────────────────

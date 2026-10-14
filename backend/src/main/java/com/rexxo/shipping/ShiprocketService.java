@@ -265,33 +265,56 @@ public class ShiprocketService implements LogisticsService {
 
     private record AwbResult(String awb, String courierName, String trackingUrl) {}
 
+    private String sanitizePhone(String phone) {
+        if (phone == null || phone.isBlank()) return "9999999999";
+        String digits = phone.replaceAll("[^0-9]", "");
+        if (digits.length() == 12 && digits.startsWith("91")) {
+            digits = digits.substring(2);
+        } else if (digits.length() == 11 && digits.startsWith("0")) {
+            digits = digits.substring(1);
+        }
+        if (digits.length() > 10) {
+            digits = digits.substring(digits.length() - 10);
+        }
+        return digits.length() == 10 ? digits : "9999999999";
+    }
+
     private Map<String, Object> buildOrderPayload(Order order, ShippingDtos.CreateShipmentRequest req,
                                                    PackageDimensions dims) {
         Map<String, Object> payload = new LinkedHashMap<>();
 
         payload.put("order_id", order.getOrderNumber());
-        payload.put("order_date", order.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
-        payload.put("pickup_location", "Primary");
+        LocalDateTime createdAt = order.getCreatedAt() != null ? order.getCreatedAt() : LocalDateTime.now();
+        payload.put("order_date", createdAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+        payload.put("pickup_location", config.getPickupLocation());
+
+        String customerName = (order.getShippingName() != null && !order.getShippingName().isBlank())
+            ? order.getShippingName() : "Valued Customer";
+        String customerPhone = sanitizePhone(order.getShippingPhone());
+        String customerEmail = (order.getUser() != null && order.getUser().getEmail() != null)
+            ? order.getUser().getEmail() : "orders@rexxzo.com";
+        String shippingAddress = (order.getShippingAddress() != null && !order.getShippingAddress().isBlank())
+            ? order.getShippingAddress() : "Address on file";
 
         // Billing = Shipping for B2C
-        payload.put("billing_customer_name", order.getShippingName());
-        payload.put("billing_address", order.getShippingAddress());
+        payload.put("billing_customer_name", customerName);
+        payload.put("billing_address", shippingAddress);
         payload.put("billing_city", order.getShippingCity());
         payload.put("billing_pincode", order.getShippingPincode());
         payload.put("billing_state", order.getShippingState());
         payload.put("billing_country", "India");
-        payload.put("billing_email", order.getUser().getEmail());
-        payload.put("billing_phone", order.getShippingPhone());
+        payload.put("billing_email", customerEmail);
+        payload.put("billing_phone", customerPhone);
 
         payload.put("shipping_is_billing", true);
-        payload.put("shipping_customer_name", order.getShippingName());
-        payload.put("shipping_address", order.getShippingAddress());
+        payload.put("shipping_customer_name", customerName);
+        payload.put("shipping_address", shippingAddress);
         payload.put("shipping_city", order.getShippingCity());
         payload.put("shipping_pincode", order.getShippingPincode());
         payload.put("shipping_state", order.getShippingState());
         payload.put("shipping_country", "India");
-        payload.put("shipping_email", order.getUser().getEmail());
-        payload.put("shipping_phone", order.getShippingPhone());
+        payload.put("shipping_email", customerEmail);
+        payload.put("shipping_phone", customerPhone);
 
         // Payment
         payload.put("payment_method", "COD".equals(req.getPaymentMode()) ? "COD" : "Prepaid");
@@ -305,20 +328,28 @@ public class ShiprocketService implements LogisticsService {
         List<Map<String, Object>> orderItems = new ArrayList<>();
         for (OrderItem item : order.getItems()) {
             Map<String, Object> oi = new LinkedHashMap<>();
-            oi.put("name", item.getProductName());
-            oi.put("sku", item.getProduct() != null ? item.getProduct().getSku() : item.getProductName());
-            oi.put("units", item.getQuantity());
-            oi.put("selling_price", item.getUnitPrice().toPlainString());
+            String itemName = item.getProductName() != null && !item.getProductName().isBlank()
+                ? item.getProductName() : "REXXZO Item";
+            String sku = (item.getProduct() != null && item.getProduct().getSku() != null && !item.getProduct().getSku().isBlank())
+                ? item.getProduct().getSku() : ("SKU-" + (item.getId() != null ? item.getId() : System.currentTimeMillis()));
+            oi.put("name", itemName);
+            oi.put("sku", sku);
+            oi.put("units", item.getQuantity() != null && item.getQuantity() > 0 ? item.getQuantity() : 1);
+            oi.put("selling_price", item.getUnitPrice() != null ? item.getUnitPrice().toPlainString() : "0.00");
             orderItems.add(oi);
         }
         payload.put("order_items", orderItems);
 
         // Package dimensions (weight in kg for Shiprocket, dims in cm)
-        double weightKg = dims.weightGrams / 1000.0;
+        double weightKg = Math.max(dims.weightGrams / 1000.0, 0.1);
+        BigDecimal length = dims.lengthCm.max(new BigDecimal("5"));
+        BigDecimal width = dims.widthCm.max(new BigDecimal("5"));
+        BigDecimal height = dims.heightCm.max(new BigDecimal("5"));
+
         payload.put("weight", String.format("%.3f", weightKg));
-        payload.put("length", dims.lengthCm.toPlainString());
-        payload.put("breadth", dims.widthCm.toPlainString());
-        payload.put("height", dims.heightCm.toPlainString());
+        payload.put("length", length.toPlainString());
+        payload.put("breadth", width.toPlainString());
+        payload.put("height", height.toPlainString());
 
         return payload;
     }
@@ -555,18 +586,89 @@ public class ShiprocketService implements LogisticsService {
         }
     }
 
-    // ─── Health ──────────────────────────────────────────────────────────────
+    // ─── Health & Diagnostics ───────────────────────────────────────────────
 
     @Override
     public boolean isHealthy() {
         if (!config.isConfigured()) return false;
         try {
-            // Attempt to get/validate a token — authenticate() logs SUCCESS or FAILED
             apiClient.getBearerToken();
             return true;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Detailed authentication diagnostic test without exposing any credentials.
+     */
+    public Map<String, Object> testAuthentication() {
+        if (!config.isConfigured()) {
+            return Map.of(
+                "configured", false,
+                "authentication", "FAILED",
+                "message", "Shiprocket credentials are not configured in backend environment variables.",
+                "baseUrl", config.getBaseUrl()
+            );
+        }
+        try {
+            apiClient.getBearerToken();
+            return Map.of(
+                "configured", true,
+                "authentication", "OK",
+                "message", "Shiprocket authentication verified successfully. API token active.",
+                "baseUrl", config.getBaseUrl(),
+                "pickupPincode", config.getPickupPincode(),
+                "pickupLocation", config.getPickupLocation()
+            );
+        } catch (Exception e) {
+            String err = apiClient.getLastAuthError();
+            if (err == null || err.isBlank()) err = e.getMessage();
+            return Map.of(
+                "configured", true,
+                "authentication", "FAILED",
+                "message", err != null ? err : "Authentication failed",
+                "baseUrl", config.getBaseUrl(),
+                "pickupPincode", config.getPickupPincode(),
+                "pickupLocation", config.getPickupLocation()
+            );
+        }
+    }
+
+    /**
+     * Queries Shiprocket for configured pickup locations.
+     */
+    public JsonNode getPickupLocations() {
+        if (!config.isConfigured()) return null;
+        try {
+            return apiClient.get("/v1/external/settings/company/pickup", null);
+        } catch (Exception e) {
+            log.error("Failed to fetch pickup locations from Shiprocket: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * On-demand courier and AWB assignment for an existing shipment.
+     */
+    @Transactional
+    public ShippingDtos.CreateShipmentResponse assignCourier(Long shipmentId, Integer courierId) {
+        Shipment shipment = shipmentRepository.findById(shipmentId)
+            .orElseThrow(() -> new RuntimeException("Shipment not found: " + shipmentId));
+        if (shipment.getProviderShipmentId() == null || shipment.getProviderShipmentId().isBlank()) {
+            throw new RuntimeException("Cannot assign courier: Order has not been created in Shiprocket yet.");
+        }
+        AwbResult result = assignAwb(shipment, shipment.getProviderShipmentId(), courierId);
+        return ShippingDtos.CreateShipmentResponse.builder()
+            .success(result.awb != null)
+            .providerOrderId(shipment.getProviderOrderId())
+            .providerShipmentId(shipment.getProviderShipmentId())
+            .awbNumber(result.awb)
+            .courierName(result.courierName)
+            .courierId(courierId)
+            .trackingUrl(result.trackingUrl)
+            .message(result.awb != null ? "AWB assigned successfully" : "Failed to assign courier/AWB")
+            .build();
     }
 
     /**

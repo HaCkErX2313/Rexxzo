@@ -42,6 +42,8 @@ public class ShiprocketApiClient {
 
     /** Cached bearer token (without "Bearer " prefix) */
     private final AtomicReference<String> cachedToken = new AtomicReference<>();
+    /** Last authentication error message for diagnostics (sanitized, zero secrets) */
+    private volatile String lastAuthError = null;
     /** When the cached token was obtained (epoch seconds) */
     private volatile long tokenObtainedAt = 0L;
 
@@ -52,7 +54,13 @@ public class ShiprocketApiClient {
         this.webClient = webClientBuilder
             .baseUrl(config.getBaseUrl())
             .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+            .defaultHeader(HttpHeaders.USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .build();
+    }
+
+    public String getLastAuthError() {
+        return lastAuthError;
     }
 
     // ─── Authentication ──────────────────────────────────────────────────────
@@ -84,11 +92,11 @@ public class ShiprocketApiClient {
         if (isTokenValid()) return cachedToken.get();
 
         if (!config.isConfigured()) {
-            throw new ShiprocketException("Shiprocket credentials are not configured. " +
-                "Set SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD environment variables.");
+            lastAuthError = "Shiprocket credentials are not configured. Set SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD environment variables.";
+            throw new ShiprocketException(lastAuthError);
         }
 
-        log.info("Authenticating with Shiprocket API...");
+        log.info("Authenticating with Shiprocket API (BaseUrl: {})...", config.getBaseUrl());
 
         try {
             Map<String, String> body = Map.of(
@@ -102,36 +110,70 @@ public class ShiprocketApiClient {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, response ->
                     response.bodyToMono(String.class)
-                        .map(err -> new ShiprocketException("Authentication failed with status "
-                            + response.statusCode().value() + ". Check credentials.")))
+                        .map(err -> {
+                            String parsedDetail = extractErrorMessage(err);
+                            String msg = "Authentication failed (HTTP " + response.statusCode().value() + "): " + parsedDetail;
+                            if (response.statusCode().value() == 401 || response.statusCode().value() == 422) {
+                                msg += " (Note: Ensure an API User has been configured under Shiprocket Dashboard > Settings > API > Configure)";
+                            }
+                            return new ShiprocketException(msg);
+                        }))
                 .bodyToMono(String.class)
                 .block();
 
             JsonNode json = objectMapper.readTree(responseBody);
             JsonNode tokenNode = json.get("token");
             if (tokenNode == null || tokenNode.isNull() || tokenNode.asText().isBlank()) {
-                throw new ShiprocketException("Shiprocket authentication response missing token field.");
+                lastAuthError = "Shiprocket authentication response missing token field.";
+                throw new ShiprocketException(lastAuthError);
             }
 
             String token = tokenNode.asText();
             cachedToken.set(token);
             tokenObtainedAt = Instant.now().getEpochSecond();
+            lastAuthError = null;
 
             // ⚠ IMPORTANT: We NEVER log the token value
             log.info("SHIPROCKET AUTHENTICATION: SUCCESS");
             return token;
 
         } catch (ShiprocketException e) {
+            lastAuthError = e.getMessage();
             log.error("SHIPROCKET AUTHENTICATION: FAILED — {}", e.getMessage());
             throw e;
         } catch (WebClientResponseException e) {
+            String errorDetail = extractErrorMessage(e.getResponseBodyAsString());
+            lastAuthError = "HTTP " + e.getStatusCode().value() + ": " + errorDetail;
             log.error("SHIPROCKET AUTHENTICATION: FAILED — HTTP {} {}",
-                e.getStatusCode().value(), e.getStatusText());
-            throw new ShiprocketException("Shiprocket authentication HTTP error: " + e.getStatusCode());
+                e.getStatusCode().value(), errorDetail);
+            throw new ShiprocketException("Shiprocket authentication error: " + lastAuthError);
         } catch (Exception e) {
-            log.error("SHIPROCKET AUTHENTICATION: FAILED — Unexpected error: {}", e.getMessage());
-            throw new ShiprocketException("Shiprocket authentication failed: " + e.getMessage());
+            lastAuthError = "Unexpected error: " + e.getMessage();
+            log.error("SHIPROCKET AUTHENTICATION: FAILED — {}", lastAuthError);
+            throw new ShiprocketException("Shiprocket authentication failed: " + lastAuthError);
         }
+    }
+
+    private String extractErrorMessage(String raw) {
+        if (raw == null || raw.isBlank()) return "No response body";
+        try {
+            JsonNode tree = objectMapper.readTree(raw);
+            if (tree.has("message") && !tree.get("message").asText().isBlank()) {
+                String m = tree.get("message").asText();
+                if (tree.has("errors") && tree.get("errors").isObject()) {
+                    return m + " " + tree.get("errors").toString();
+                }
+                return m;
+            }
+            if (tree.has("error") && !tree.get("error").asText().isBlank()) {
+                return tree.get("error").asText();
+            }
+        } catch (Exception ignored) {}
+        // Clean any potential HTML or lengthy payload
+        if (raw.length() > 200) {
+            return raw.substring(0, 200) + "...";
+        }
+        return raw;
     }
 
     /** Invalidates the cached token so next call re-authenticates. */

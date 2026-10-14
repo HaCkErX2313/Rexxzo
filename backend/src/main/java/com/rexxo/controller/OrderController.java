@@ -9,6 +9,7 @@ import com.rexxo.service.PincodeService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -25,6 +26,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
+@Slf4j
 public class OrderController {
 
     private final OrderRepository orderRepository;
@@ -38,6 +40,7 @@ public class OrderController {
     private final PincodeService pincodeService;
     private final NotificationService notificationService;
     private final AnalyticsService analyticsService;
+    private final com.rexxo.shipping.ShiprocketService shiprocketService;
 
     @GetMapping
     @Transactional(readOnly = true)
@@ -123,10 +126,13 @@ public class OrderController {
         String orderNumber = "RXO-" + System.currentTimeMillis() + "-" +
             UUID.randomUUID().toString().substring(0, 4).toUpperCase();
 
+        boolean isCod = "COD".equalsIgnoreCase(request.paymentMethod())
+            || "Cash on Delivery".equalsIgnoreCase(request.paymentMethod());
+
         Order order = Order.builder()
             .orderNumber(orderNumber)
             .user(user)
-            .status(Order.OrderStatus.PENDING)
+            .status(isCod ? Order.OrderStatus.CONFIRMED : Order.OrderStatus.PENDING_PAYMENT)
             .subtotal(subtotal)
             .shippingFee(shippingFee)
             .discountAmount(discountAmount)
@@ -138,7 +144,7 @@ public class OrderController {
             .shippingCity(request.shippingCity())
             .shippingState(request.shippingState())
             .shippingPincode(request.shippingPincode())
-            .paymentMethod(request.paymentMethod() != null ? request.paymentMethod() : "PREPAID")
+            .paymentMethod(isCod ? "COD" : "PREPAID")
             .build();
 
         // Add items and decrement stock
@@ -163,10 +169,28 @@ public class OrderController {
         }
 
         Order saved = orderRepository.save(order);
-        cartItemRepository.deleteByCartId(cart.getId());
 
-        // Notifications and Analytics
-        notificationService.notifyOrderConfirmed(saved);
+        // For COD orders, clear cart and notify immediately.
+        // For Online orders, cart is cleared upon cryptographic payment verification.
+        if (isCod) {
+            cartItemRepository.deleteByCartId(cart.getId());
+            notificationService.notifyOrderConfirmed(saved);
+
+            // Trigger Shiprocket shipment creation for validated COD orders
+            try {
+                com.rexxo.shipping.ShippingDtos.CreateShipmentRequest shipReq =
+                    com.rexxo.shipping.ShippingDtos.CreateShipmentRequest.builder()
+                        .orderId(saved.getId())
+                        .paymentMode("COD")
+                        .codAmount(saved.getTotal())
+                        .build();
+                shiprocketService.createShipment(shipReq);
+            } catch (Exception e) {
+                log.error("Failed to automatically create Shiprocket shipment for COD order {}: {}",
+                    saved.getOrderNumber(), e.getMessage());
+            }
+        }
+
         analyticsService.trackEvent(AnalyticsEvent.EventType.ORDER_CREATED, user.getId(), null,
             "Order", saved.getId(), "total=" + saved.getTotal());
 

@@ -876,6 +876,14 @@ public class AdminController {
     private AdminOrderDto toAdminOrderDto(Order o) {
         String awb = o.getShipment() != null ? o.getShipment().getAwbNumber() : null;
         String courier = o.getShipment() != null ? o.getShipment().getCourierName() : null;
+        Long shipmentId = o.getShipment() != null ? o.getShipment().getId() : null;
+        String shipmentStatus = o.getShipment() != null && o.getShipment().getShipmentStatus() != null
+            ? o.getShipment().getShipmentStatus().name() : null;
+        String shipmentFailureReason = o.getShipment() != null ? o.getShipment().getFailureReason() : null;
+        String providerOrderId = o.getShipment() != null ? o.getShipment().getProviderOrderId() : null;
+        String providerShipmentId = o.getShipment() != null ? o.getShipment().getProviderShipmentId() : null;
+        String trackingUrl = o.getShipment() != null ? o.getShipment().getTrackingUrl() : null;
+
         String paymentStatus = o.getPayment() != null && o.getPayment().getStatus() != null
             ? o.getPayment().getStatus().name() : (o.getPaymentMethod() != null ? o.getPaymentMethod() : "PENDING");
 
@@ -889,7 +897,9 @@ public class AdminController {
 
         return new AdminOrderDto(
             o.getId(), o.getOrderNumber(), customerName, customerEmail,
-            o.getStatus().name(), paymentStatus, courier, awb, o.getTotal() != null ? o.getTotal() : BigDecimal.ZERO, itemCount, o.getCreatedAt()
+            o.getStatus().name(), paymentStatus, courier, awb,
+            shipmentId, shipmentStatus, shipmentFailureReason, providerOrderId, providerShipmentId, trackingUrl,
+            o.getTotal() != null ? o.getTotal() : BigDecimal.ZERO, itemCount, o.getCreatedAt()
         );
     }
 
@@ -953,6 +963,8 @@ public class AdminController {
     public record AdminOrderDto(
         Long id, String orderNumber, String customerName, String customerEmail,
         String status, String paymentStatus, String courier, String awb,
+        Long shipmentId, String shipmentStatus, String shipmentFailureReason,
+        String providerOrderId, String providerShipmentId, String trackingUrl,
         BigDecimal total, int itemCount, LocalDateTime createdAt
     ) {}
 

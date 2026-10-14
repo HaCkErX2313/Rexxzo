@@ -12,10 +12,10 @@ import java.util.Map;
 
 /**
  * Public health check endpoint.
- * GET /api/health — returns database connectivity status.
+ * GET /api/health, /health, /actuator/health — returns application liveness and database connectivity status.
  */
 @RestController
-@RequestMapping("/api/health")
+@RequestMapping({"/api/health", "/health", "/actuator/health"})
 @RequiredArgsConstructor
 public class HealthController {
 

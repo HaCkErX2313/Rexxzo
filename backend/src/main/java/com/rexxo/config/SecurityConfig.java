@@ -58,11 +58,12 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/reviews/**").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/health", "/health", "/actuator/health").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/shipping/pincode/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/analytics/events").permitAll()
-                // Shiprocket webhook — receives calls from Shiprocket, not from browser users
+                // Webhooks — external services without customer JWT
                 .requestMatchers(HttpMethod.POST, "/api/shipping/webhooks/shiprocket").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll()
                 // Admin-only endpoints
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 // All other endpoints require authentication

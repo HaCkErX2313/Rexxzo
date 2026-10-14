@@ -23,9 +23,10 @@ declare global {
   interface Window {
     Razorpay: new (options: Record<string, unknown>) => {
       open: () => void;
+      on: (event: string, callback: (response: any) => void) => void;
     };
   }
-}p
+}
 
 interface LocationOption {
   name: string;
@@ -261,38 +262,113 @@ export default function CheckoutPage() {
     setIsProcessing(true);
 
     try {
-      const order = await api.placeOrder({
-        subtotal: cart.subtotal,
-        shippingFee: cart.shipping,
-        discountAmount: cart.discount,
-        totalAmount: cart.total,
-        paymentMethod: formData.paymentMethod === 'ONLINE' ? 'Razorpay / UPI' : 'Cash on Delivery',
-        items: cart.items.map((item) => ({
-          productId: item.productId,
-          productName: item.productName,
-          quantity: item.quantity,
-          price: item.price,
-          imageUrl: item.imageUrl,
-        })),
-        shippingAddress: {
-          street: formData.street,
-          city: formData.city,
-          state: formData.state,
-          postalCode: formData.postalCode,
-          country: formData.country,
-        },
-      });
+      if (formData.paymentMethod === 'ONLINE') {
+        // 1. Create order on backend with PENDING_PAYMENT status
+        const order = await api.placeOrder({
+          shippingName: formData.name,
+          shippingPhone: formData.phone,
+          shippingAddress: formData.street,
+          shippingCity: formData.city,
+          shippingState: formData.state,
+          shippingPincode: formData.postalCode,
+          paymentMethod: 'ONLINE',
+        });
 
-      await refreshCart();
-      setCompletedOrderNumber(order.orderNumber);
+        // 2. Initialize Razorpay payment order on backend
+        const rzpOrder = await api.createRazorpayOrder(order.id);
+
+        // 3. Ensure Razorpay Standard Checkout SDK is loaded
+        const isLoaded = await loadRazorpay();
+        if (!isLoaded) {
+          throw new Error('Unable to load Razorpay payment gateway. Please check your internet connection.');
+        }
+
+        // 4. Open Razorpay Standard Checkout Modal
+        const rzp = new window.Razorpay({
+          key: rzpOrder.keyId,
+          amount: rzpOrder.amountPaisa,
+          currency: rzpOrder.currency || 'INR',
+          name: 'REXXZO',
+          description: `Order #${order.orderNumber}`,
+          order_id: rzpOrder.razorpayOrderId,
+          prefill: {
+            name: formData.name,
+            email: formData.email || user?.email || '',
+            contact: formData.phone,
+          },
+          theme: {
+            color: '#080808',
+          },
+          modal: {
+            ondismiss: () => {
+              setIsProcessing(false);
+              setSubmitError(
+                'Payment was not completed. Your order has been saved, and you can retry paying whenever you are ready.'
+              );
+            },
+          },
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              setIsProcessing(true);
+              const verifyRes = await api.verifyPayment({
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySignature: response.razorpay_signature,
+              });
+
+              if (verifyRes.success) {
+                if (typeof window !== 'undefined') {
+                  localStorage.removeItem('rexxo_cart');
+                }
+                await refreshCart();
+                setCompletedOrderNumber(order.orderNumber);
+              } else {
+                setSubmitError(verifyRes.message || 'Payment signature verification failed.');
+              }
+            } catch (err: unknown) {
+              setSubmitError(err instanceof Error ? err.message : 'Payment verification failed. Please contact support.');
+            } finally {
+              setIsProcessing(false);
+            }
+          },
+        });
+
+        rzp.on('payment.failed', (resp: any) => {
+          setIsProcessing(false);
+          setSubmitError(`Payment failed: ${resp.error?.description || 'Transaction declined by bank or card issuer.'}`);
+        });
+
+        rzp.open();
+      } else {
+        // Cash on Delivery flow
+        const order = await api.placeOrder({
+          shippingName: formData.name,
+          shippingPhone: formData.phone,
+          shippingAddress: formData.street,
+          shippingCity: formData.city,
+          shippingState: formData.state,
+          shippingPincode: formData.postalCode,
+          paymentMethod: 'COD',
+        });
+
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('rexxo_cart');
+        }
+        await refreshCart();
+        setCompletedOrderNumber(order.orderNumber);
+        setIsProcessing(false);
+      }
     } catch (err: unknown) {
+      setIsProcessing(false);
       if (err instanceof Error) {
         setSubmitError(err.message);
       } else {
         setSubmitError('Order placement encountered an error. Please try again.');
       }
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -704,7 +780,7 @@ export default function CheckoutPage() {
               disabled={isProcessing || Boolean(stateMismatchError)}
               className="w-full py-4 bg-[#080808] hover:bg-[#222222] text-[#C8BCA7] text-xs font-bold uppercase tracking-widest rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
             >
-              <span>{isProcessing ? 'Processing Order...' : 'Place Order'}</span>
+              <span>{isProcessing ? 'Processing Order...' : (formData.paymentMethod === 'ONLINE' ? `Proceed to Pay ₹${cart.total.toLocaleString('en-IN')}` : 'Place COD Order')}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 

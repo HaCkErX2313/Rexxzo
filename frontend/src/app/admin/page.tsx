@@ -106,6 +106,7 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
   const [pickupAwb, setPickupAwb] = useState('');
   const [stockEditId, setStockEditId] = useState<number | null>(null);
   const [newStockVal, setNewStockVal] = useState<number>(0);
+  const [retryingOrderId, setRetryingOrderId] = useState<number | null>(null);
 
   // Authentication check on mount
   useEffect(() => {
@@ -217,6 +218,23 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
   }, [loadTabData, authChecked]);
 
   // Actions
+  const handleRetryShiprocket = async (orderId: number) => {
+    setRetryingOrderId(orderId);
+    try {
+      const res = await api.createAdminShipment(orderId);
+      if (res && res.success) {
+        setMessage({ type: 'success', text: `Shiprocket order #${res.providerOrderId || ''} synced successfully.` });
+      } else {
+        setMessage({ type: 'error', text: (res && res.message) || 'Shiprocket sync failed.' });
+      }
+      await loadTabData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Failed to retry Shiprocket sync' });
+    } finally {
+      setRetryingOrderId(null);
+    }
+  };
+
   const handleToggleProduct = async (id: number) => {
     try {
       await api.toggleAdminProduct(id);
@@ -736,8 +754,61 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
                       <td className="p-3 text-[11px] text-[#666666]">
                         {ord.awb ? (
                           <div>
-                            <span className="font-bold text-[#080808]">{ord.courier}</span>
-                            <span className="block text-[#888888]">AWB: {ord.awb}</span>
+                            <span className="font-bold text-[#080808]">{ord.courier || 'Shiprocket Partner'}</span>
+                            <a
+                              href={ord.trackingUrl || `https://shiprocket.co/tracking/${ord.awb}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-[10px] text-blue-600 hover:underline font-mono"
+                            >
+                              AWB: {ord.awb}
+                            </a>
+                            <span className="inline-block mt-0.5 text-[9px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold px-1.5 py-0.5 rounded">
+                              {ord.shipmentStatus || 'SYNCED'}
+                            </span>
+                          </div>
+                        ) : ord.shipmentStatus === 'FAILED' ? (
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                              <AlertCircle className="w-3 h-3 text-red-500" /> Sync Failed
+                            </span>
+                            {ord.shipmentFailureReason && (
+                              <div
+                                className="text-[10px] text-red-600 truncate max-w-[170px]"
+                                title={ord.shipmentFailureReason}
+                              >
+                                {ord.shipmentFailureReason}
+                              </div>
+                            )}
+                            <button
+                              onClick={() => handleRetryShiprocket(ord.id)}
+                              disabled={retryingOrderId === ord.id}
+                              className="text-[10px] font-bold text-[#080808] hover:text-red-700 underline flex items-center gap-1"
+                            >
+                              <RefreshCw className={`w-2.5 h-2.5 ${retryingOrderId === ord.id ? 'animate-spin' : ''}`} />
+                              {retryingOrderId === ord.id ? 'Retrying...' : 'Retry Sync'}
+                            </button>
+                          </div>
+                        ) : ord.shipmentStatus === 'CREATED' ? (
+                          <div>
+                            <span className="inline-block bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                              Shiprocket Synced
+                            </span>
+                            <div className="text-[10px] text-[#777777] mt-0.5">
+                              Shipment ID: #{ord.providerShipmentId || ord.providerOrderId}
+                            </div>
+                          </div>
+                        ) : ord.status !== 'CANCELLED' && ord.status !== 'PENDING_PAYMENT' ? (
+                          <div>
+                            <span className="text-[#aaaaaa] text-[10px] block">Not synced to Shiprocket</span>
+                            <button
+                              onClick={() => handleRetryShiprocket(ord.id)}
+                              disabled={retryingOrderId === ord.id}
+                              className="mt-1 text-[10px] font-bold text-[#080808] hover:underline flex items-center gap-1"
+                            >
+                              <Truck className="w-2.5 h-2.5" />
+                              {retryingOrderId === ord.id ? 'Syncing...' : 'Sync to Shiprocket'}
+                            </button>
                           </div>
                         ) : (
                           <span className="text-[#aaaaaa]">Pending fulfillment</span>

@@ -674,43 +674,87 @@ export const api = {
   },
 
   // Orders
-  async placeOrder(orderData: Partial<Order>): Promise<Order> {
-    try {
-      const res = await fetch(`${API_BASE_URL}/orders`, {
-        method: 'POST',
-        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderData),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // fallback
-    }
-    const newOrder: Order = {
-      id: Math.floor(Math.random() * 90000) + 10000,
-      orderNumber: `REX-${Date.now().toString().slice(-6)}`,
-      status: 'CONFIRMED',
-      subtotal: orderData.subtotal || 0,
-      shippingFee: orderData.shippingFee || 0,
-      discountAmount: orderData.discountAmount || 0,
-      totalAmount: orderData.totalAmount || 0,
-      items: orderData.items || [],
-      shippingAddress: orderData.shippingAddress || {
-        street: '123 Minimalist Avenue',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        postalCode: '560001',
-        country: 'India',
-      },
-      paymentMethod: orderData.paymentMethod || 'Online (Razorpay / UPI)',
-      paymentStatus: 'COMPLETED',
-      createdAt: new Date().toISOString(),
+  async placeOrder(orderData: any): Promise<Order> {
+    const payload = {
+      shippingName: orderData.shippingName || orderData.name || orderData.shippingAddress?.name || 'Customer',
+      shippingPhone: orderData.shippingPhone || orderData.phone || orderData.shippingAddress?.phone || '',
+      shippingAddress: orderData.shippingAddress?.street || orderData.shippingAddress || orderData.street || '',
+      shippingCity: orderData.shippingCity || orderData.shippingAddress?.city || orderData.city || '',
+      shippingState: orderData.shippingState || orderData.shippingAddress?.state || orderData.state || '',
+      shippingPincode: orderData.shippingPincode || orderData.shippingAddress?.postalCode || orderData.postalCode || '',
+      couponCode: orderData.couponCode || null,
+      paymentMethod: orderData.paymentMethod === 'ONLINE' ? 'PREPAID' : (orderData.paymentMethod || 'PREPAID'),
     };
-    if (typeof window !== 'undefined') {
-      const existing = JSON.parse(localStorage.getItem('rexxo_orders') || '[]');
-      localStorage.setItem('rexxo_orders', JSON.stringify([newOrder, ...existing]));
-      localStorage.removeItem('rexxo_cart');
+
+    const res = await fetch(`${API_BASE_URL}/orders`, {
+      method: 'POST',
+      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to place order. Please check your cart and details.');
     }
-    return newOrder;
+
+    return await res.json();
+  },
+
+  async createRazorpayOrder(orderId: number): Promise<{
+    razorpayOrderId: string;
+    amountPaisa: number;
+    currency: string;
+    keyId: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/payments/create-order`, {
+      method: 'POST',
+      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to initialize payment gateway.');
+    }
+
+    return await res.json();
+  },
+
+  async verifyPayment(verificationData: {
+    razorpayOrderId: string;
+    razorpayPaymentId: string;
+    razorpaySignature: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/payments/verify`, {
+      method: 'POST',
+      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(verificationData),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Payment verification failed.');
+    }
+
+    return await res.json();
+  },
+
+  async confirmCodPayment(orderId: number): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/payments/confirm-cod`, {
+      method: 'POST',
+      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to confirm COD order.');
+    }
+
+    return await res.json();
   },
 
   async getOrders(): Promise<Order[]> {
@@ -1304,6 +1348,48 @@ export const api = {
       body: JSON.stringify({ status }),
     });
     return handleAdminResponse(res, 'Failed to update order status');
+  },
+
+  async getAdminShippingStatus(): Promise<{
+    configured: boolean;
+    authentication: 'OK' | 'FAILED';
+    message: string;
+    baseUrl: string;
+    pickupPincode?: string;
+    pickupLocation?: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/admin/shipping/status`, {
+      headers: { ...getAdminAuthHeader() },
+    });
+    return handleAdminResponse(res, 'Failed to fetch shipping status');
+  },
+
+  async createAdminShipment(
+    orderId: number,
+    body: { paymentMode?: string; courierId?: number; codAmount?: number } = {}
+  ): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/admin/shipping/orders/${orderId}/create-shipment`, {
+      method: 'POST',
+      headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return handleAdminResponse(res, 'Failed to create shipment in Shiprocket');
+  },
+
+  async assignAdminCourier(shipmentId: number, courierId: number): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/admin/shipping/shipments/${shipmentId}/assign-courier`, {
+      method: 'POST',
+      headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courierId }),
+    });
+    return handleAdminResponse(res, 'Failed to assign courier');
+  },
+
+  async getAdminPickupLocations(): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/admin/shipping/pickup-locations`, {
+      headers: { ...getAdminAuthHeader() },
+    });
+    return handleAdminResponse(res, 'Failed to fetch pickup locations');
   },
 
 
