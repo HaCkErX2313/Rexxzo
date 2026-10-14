@@ -58,4 +58,16 @@ class CorsIntegrationTest {
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:3000"))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
     }
+
+    @Test
+    @DisplayName("OPTIONS preflight to /api/admin/auth/login from https://rexxzo.com returns 200 with CORS headers")
+    void testRexxzoDomainPreflight() throws Exception {
+        mockMvc.perform(options("/api/admin/auth/login")
+                .header(HttpHeaders.ORIGIN, "https://rexxzo.com")
+                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
+            .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://rexxzo.com"))
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
+    }
 }

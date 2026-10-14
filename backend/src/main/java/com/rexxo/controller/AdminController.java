@@ -55,6 +55,9 @@ public class AdminController {
     private final AdminAuditService auditService;
     private final WhatsAppNotificationService whatsAppService;
     private final ShiprocketConfig shiprocketConfig;
+    private final CartItemRepository cartItemRepository;
+    private final WishlistItemRepository wishlistItemRepository;
+    private final com.rexxo.service.CloudinaryService cloudinaryService;
 
     @Value("${razorpay.key.id:}")
     private String razorpayKeyId;
@@ -481,35 +484,107 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("id", id, "isActive", p.getIsActive(), "status", p.getStatus()));
     }
 
+    @PatchMapping("/products/{id}/archive")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> archiveProduct(Authentication auth, @PathVariable Long id) {
+        Product p = productRepository.findById(id)
+            .orElseThrow(() -> RexxoException.notFound("Product not found with ID: " + id));
+
+        p.setIsActive(false);
+        p.setStatus("ARCHIVED");
+        productRepository.save(p);
+        auditService.log(auth.getName(), "ADMIN_ARCHIVED_PRODUCT", "Product", id,
+            "Archived product: " + p.getName(), null);
+        return ResponseEntity.ok(Map.of(
+            "message", "Product successfully archived and removed from customer storefront",
+            "action", "ARCHIVE",
+            "archived", true,
+            "id", id,
+            "status", "ARCHIVED",
+            "isActive", false
+        ));
+    }
+
+    @PatchMapping("/products/{id}/restore")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> restoreProduct(Authentication auth, @PathVariable Long id) {
+        Product p = productRepository.findById(id)
+            .orElseThrow(() -> RexxoException.notFound("Product not found with ID: " + id));
+
+        p.setIsActive(true);
+        p.setStatus(p.getStock() != null && p.getStock() > 0 ? "ACTIVE" : "OUT_OF_STOCK");
+        productRepository.save(p);
+        auditService.log(auth.getName(), "ADMIN_RESTORED_PRODUCT", "Product", id,
+            "Restored product to active catalog: " + p.getName(), null);
+        return ResponseEntity.ok(Map.of(
+            "message", "Product successfully restored to storefront catalog",
+            "action", "RESTORE",
+            "archived", false,
+            "id", id,
+            "status", p.getStatus(),
+            "isActive", true
+        ));
+    }
+
     @DeleteMapping("/products/{id}")
     @Transactional
-    public ResponseEntity<Map<String, Object>> deleteProduct(Authentication auth, @PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteProduct(
+            Authentication auth,
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean permanent) {
         Product p = productRepository.findById(id)
             .orElseThrow(() -> RexxoException.notFound("Product not found with ID: " + id));
 
         boolean hasOrders = orderRepository.existsByProductId(id);
-        if (hasOrders) {
-            // Price & order history integrity: archive rather than hard-deleting
+        boolean hasReviews = reviewRepository.existsByProductId(id);
+
+        if (!permanent) {
+            // Default safe removal strategy: archive/unlist product from storefront
             p.setIsActive(false);
             p.setStatus("ARCHIVED");
             productRepository.save(p);
             auditService.log(auth.getName(), "ADMIN_ARCHIVED_PRODUCT", "Product", id,
-                "Archived product with existing order history: " + p.getName(), null);
+                "Archived product: " + p.getName(), null);
             return ResponseEntity.ok(Map.of(
-                "message", "Product has historical order records; archived and removed from storefront catalog",
+                "message", "Product safely archived and unlisted from storefront catalog",
+                "action", "ARCHIVE",
                 "archived", true,
-                "id", id
-            ));
-        } else {
-            productRepository.delete(p);
-            auditService.log(auth.getName(), "ADMIN_DELETED_PRODUCT", "Product", id,
-                "Permanently deleted product: " + p.getName(), null);
-            return ResponseEntity.ok(Map.of(
-                "message", "Product successfully deleted",
-                "deleted", true,
-                "id", id
+                "id", id,
+                "status", "ARCHIVED"
             ));
         }
+
+        // Permanent deletion requested: enforce safety and historical audit integrity
+        if (hasOrders || hasReviews) {
+            String reason = hasOrders ? "customer order history" : "customer reviews";
+            throw RexxoException.conflict("Cannot permanently delete product \"" + p.getName() +
+                "\" because historical " + reason + " are linked to it in PostgreSQL. " +
+                "Please Archive/Unlist the product instead to protect historical invoices, customer receipts, and audit compliance.");
+        }
+
+        // Safe to permanently delete: clean up transient cart/wishlist references first
+        cartItemRepository.deleteByProductId(id);
+        wishlistItemRepository.deleteByProductId(id);
+
+        // Delete images from Cloudinary if publicIds exist
+        if (p.getImages() != null) {
+            for (ProductImage img : p.getImages()) {
+                if (img.getPublicId() != null && !img.getPublicId().isBlank()) {
+                    cloudinaryService.deleteImage(img.getPublicId());
+                }
+            }
+        }
+
+        productRepository.delete(p);
+        auditService.log(auth.getName(), "ADMIN_DELETED_PRODUCT", "Product", id,
+            "Permanently deleted product: " + p.getName(), null);
+
+        return ResponseEntity.ok(Map.of(
+            "message", "Product successfully and permanently deleted",
+            "action", "DELETE",
+            "deleted", true,
+            "id", id
+        ));
     }
 
     @PostMapping("/products/upload-image")
@@ -520,40 +595,13 @@ public class AdminController {
             throw RexxoException.badRequest("File cannot be empty");
         }
 
-        String contentType = file.getContentType();
-        if (contentType == null || (!contentType.startsWith("image/"))) {
-            throw RexxoException.badRequest("Only image files (JPEG, PNG, WEBP, GIF) are allowed");
-        }
-
-        try {
-            // Generate clean filename
-            String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "product.jpg";
-            String extension = originalName.contains(".") ? originalName.substring(originalName.lastIndexOf(".")) : ".jpg";
-            String filename = "prod_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8) + extension;
-
-            // Target directory: frontend public images directory for instant Next.js serving
-            Path publicImagesPath = Paths.get("frontend", "public", "images", "uploads");
-            if (!Files.exists(publicImagesPath)) {
-                // If relative to backend, resolve relative to project root
-                Path projectRoot = Paths.get("..", "frontend", "public", "images", "uploads");
-                if (Files.exists(Paths.get("..", "frontend"))) {
-                    publicImagesPath = projectRoot;
-                }
-                Files.createDirectories(publicImagesPath);
-            }
-
-            Path targetPath = publicImagesPath.resolve(filename);
-            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-
-            String webUrl = "/images/uploads/" + filename;
-            return ResponseEntity.ok(Map.of(
-                "url", webUrl,
-                "filename", filename,
-                "message", "Image uploaded successfully"
-            ));
-        } catch (IOException e) {
-            throw RexxoException.internal("Failed to save uploaded image: " + e.getMessage());
-        }
+        var uploadResult = cloudinaryService.uploadImage(file, "rexxzo/products");
+        return ResponseEntity.ok(Map.of(
+            "url", uploadResult.url(),
+            "filename", uploadResult.filename() != null ? uploadResult.filename() : "",
+            "publicId", uploadResult.publicId() != null ? uploadResult.publicId() : "",
+            "message", "Image uploaded successfully to durable storage"
+        ));
     }
 
     @GetMapping({"/inventory", "/inventory/low-stock"})

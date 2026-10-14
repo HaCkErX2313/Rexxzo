@@ -26,6 +26,10 @@ public class ProductController {
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final com.rexxo.repository.OrderRepository orderRepository;
+    private final com.rexxo.repository.ReviewRepository reviewRepository;
+    private final com.rexxo.repository.CartItemRepository cartItemRepository;
+    private final com.rexxo.repository.WishlistItemRepository wishlistItemRepository;
 
     @GetMapping
     public ResponseEntity<Page<ProductSummaryDto>> list(
@@ -217,12 +221,44 @@ public class ProductController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @org.springframework.transaction.annotation.Transactional
-    public ResponseEntity<Map<String, String>> delete(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> delete(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean permanent) {
         Product p = productRepository.findById(id)
-            .orElseThrow(() -> RexxoException.notFound("Product not found"));
-        p.setIsActive(false);
-        productRepository.save(p);
-        return ResponseEntity.ok(Map.of("message", "Product deactivated"));
+            .orElseThrow(() -> RexxoException.notFound("Product not found with ID: " + id));
+
+        boolean hasOrders = orderRepository.existsByProductId(id);
+        boolean hasReviews = reviewRepository.existsByProductId(id);
+
+        if (!permanent) {
+            p.setIsActive(false);
+            p.setStatus("ARCHIVED");
+            productRepository.save(p);
+            return ResponseEntity.ok(Map.of(
+                "message", "Product successfully archived and removed from storefront catalog",
+                "action", "ARCHIVE",
+                "archived", true,
+                "id", id,
+                "status", "ARCHIVED"
+            ));
+        }
+
+        if (hasOrders || hasReviews) {
+            String reason = hasOrders ? "orders" : "reviews";
+            throw RexxoException.conflict("Cannot permanently delete product \"" + p.getName() +
+                "\" because historical " + reason + " exist. Please Archive/Unlist instead.");
+        }
+
+        cartItemRepository.deleteByProductId(id);
+        wishlistItemRepository.deleteByProductId(id);
+        productRepository.delete(p);
+
+        return ResponseEntity.ok(Map.of(
+            "message", "Product permanently deleted",
+            "action", "DELETE",
+            "deleted", true,
+            "id", id
+        ));
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────────────

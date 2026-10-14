@@ -11,4 +11,7 @@ public interface WishlistItemRepository extends JpaRepository<WishlistItem, Long
     Optional<WishlistItem> findByWishlistIdAndProductId(Long wishlistId, Long productId);
     boolean existsByWishlistIdAndProductId(Long wishlistId, Long productId);
     void deleteByWishlistIdAndProductId(Long wishlistId, Long productId);
+
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByProductId(Long productId);
 }

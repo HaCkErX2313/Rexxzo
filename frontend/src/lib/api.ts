@@ -362,40 +362,39 @@ export const api = {
       
       const res = await fetch(`${API_BASE_URL}/products?${queryParams.toString()}`, {
         headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
       });
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data?.content || []);
-        if (list.length > 0) {
-          return list.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            slug: item.slug,
-            description: item.description || item.shortDescription || '',
-            price: Number(item.price),
-            compareAtPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
-            originalPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
-            discountPercent: item.discountPercent ? Number(item.discountPercent) : undefined,
-            sku: item.sku || '',
-            stockQuantity: item.stock !== undefined ? Number(item.stock) : 0,
-            stock: item.stock !== undefined ? Number(item.stock) : 0,
-            status: item.status || (item.stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK'),
-            lowStockThreshold: item.lowStockThreshold || 10,
-            categoryName: item.categoryName || (item.category?.name),
-            category: item.category || {
-              id: item.categoryId || 0,
-              name: item.categoryName || '',
-              slug: item.categorySlug || '',
-            },
-            images: item.images && item.images.length > 0 
-              ? (typeof item.images[0] === 'string' ? item.images.map((url: string) => ({ imageUrl: url })) : item.images)
-              : (item.primaryImage ? [{ imageUrl: item.primaryImage, isPrimary: true }] : [{ imageUrl: '/images/hero_banner.jpg', isPrimary: true }]),
-            averageRating: item.avgRating ? Number(item.avgRating) : 5,
-            reviewCount: item.reviewCount || 0,
-            isFeatured: !!item.isFeatured,
-            isActive: item.isActive !== undefined ? item.isActive : true,
-          }));
-        }
+        return list.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          slug: item.slug,
+          description: item.description || item.shortDescription || '',
+          price: Number(item.price),
+          compareAtPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
+          originalPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
+          discountPercent: item.discountPercent ? Number(item.discountPercent) : undefined,
+          sku: item.sku || '',
+          stockQuantity: item.stock !== undefined ? Number(item.stock) : 0,
+          stock: item.stock !== undefined ? Number(item.stock) : 0,
+          status: item.status || (item.stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK'),
+          lowStockThreshold: item.lowStockThreshold || 10,
+          categoryName: item.categoryName || (item.category?.name),
+          category: item.category || {
+            id: item.categoryId || 0,
+            name: item.categoryName || '',
+            slug: item.categorySlug || '',
+          },
+          images: item.images && item.images.length > 0 
+            ? (typeof item.images[0] === 'string' ? item.images.map((url: string) => ({ imageUrl: url })) : item.images)
+            : (item.primaryImage ? [{ imageUrl: item.primaryImage, isPrimary: true }] : [{ imageUrl: '/images/hero_banner.jpg', isPrimary: true }]),
+          averageRating: item.avgRating ? Number(item.avgRating) : 5,
+          reviewCount: item.reviewCount || 0,
+          isFeatured: !!item.isFeatured,
+          isActive: item.isActive !== undefined ? item.isActive : true,
+        }));
       }
     } catch {
       // Backend offline or unreachable: gracefully use local curated catalog
@@ -1006,6 +1005,7 @@ export const api = {
 
     const res = await fetch(`${API_BASE_URL}/admin/products?${q.toString()}`, {
       headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+      cache: 'no-store',
     });
     return handleAdminResponse(res, 'Failed to fetch admin products');
   },
@@ -1013,6 +1013,7 @@ export const api = {
   async getAdminProduct(id: number): Promise<any> {
     const res = await fetch(`${API_BASE_URL}/admin/products/${id}`, {
       headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+      cache: 'no-store',
     });
     return handleAdminResponse(res, 'Failed to fetch product details');
   },
@@ -1035,12 +1036,28 @@ export const api = {
     return handleAdminResponse(res, 'Failed to update product');
   },
 
-  async deleteAdminProduct(id: number): Promise<{ success: boolean; message: string; action: string }> {
-    const res = await fetch(`${API_BASE_URL}/admin/products/${id}`, {
+  async deleteAdminProduct(id: number, permanent = false): Promise<{ success: boolean; message: string; action: string; deleted?: boolean; archived?: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/admin/products/${id}?permanent=${permanent}`, {
       method: 'DELETE',
       headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
     });
     return handleAdminResponse(res, 'Failed to delete product');
+  },
+
+  async archiveAdminProduct(id: number): Promise<{ success: boolean; message: string; action: string; archived: boolean; status: string }> {
+    const res = await fetch(`${API_BASE_URL}/admin/products/${id}/archive`, {
+      method: 'PATCH',
+      headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+    });
+    return handleAdminResponse(res, 'Failed to archive product');
+  },
+
+  async restoreAdminProduct(id: number): Promise<{ success: boolean; message: string; action: string; archived: boolean; status: string }> {
+    const res = await fetch(`${API_BASE_URL}/admin/products/${id}/restore`, {
+      method: 'PATCH',
+      headers: { ...getAdminAuthHeader(), 'Content-Type': 'application/json' },
+    });
+    return handleAdminResponse(res, 'Failed to restore product');
   },
 
   async toggleAdminProductStatus(id: number): Promise<{ success: boolean; isActive: boolean; status: string }> {

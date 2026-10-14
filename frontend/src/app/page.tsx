@@ -8,6 +8,9 @@ import CategoryCard from '@/components/category/CategoryCard';
 import ProductCard from '@/components/product/ProductCard';
 import { api } from '@/lib/api';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function HomePage() {
   const [categories, products] = await Promise.all([
     api.getCategories(),

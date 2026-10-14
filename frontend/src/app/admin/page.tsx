@@ -227,6 +227,26 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
     }
   };
 
+  const handleArchiveProduct = async (id: number) => {
+    try {
+      await api.archiveAdminProduct(id);
+      loadTabData();
+      setMessage({ type: 'success', text: 'Product unlisted and archived from storefront.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Archive failed' });
+    }
+  };
+
+  const handleRestoreProduct = async (id: number) => {
+    try {
+      await api.restoreAdminProduct(id);
+      loadTabData();
+      setMessage({ type: 'success', text: 'Product restored to storefront catalog.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Restore failed' });
+    }
+  };
+
   const handleCreateSubAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAdmin.name || !newAdmin.email || !newAdmin.password) return;
@@ -768,13 +788,21 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
                   Manage items, prices, active status, and catalog visibility.
                 </p>
               </div>
-              <button
-                onClick={() => setIsProductModalOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#080808] text-[#C8BCA7] rounded text-xs font-bold uppercase tracking-wider hover:bg-[#222222]"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Product
-              </button>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/admin/products"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-[#f4f1ea] border border-[#d5d0c5] text-[#222222] rounded text-xs font-bold uppercase tracking-wider hover:bg-[#eae5da]"
+                >
+                  Full Catalog & Deletion
+                </Link>
+                <button
+                  onClick={() => setIsProductModalOpen(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#080808] text-[#C8BCA7] rounded text-xs font-bold uppercase tracking-wider hover:bg-[#222222]"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Product
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border border-[#e5e1d8] overflow-hidden shadow-sm">
@@ -791,61 +819,86 @@ export default function AdminPage({ initialTab }: { initialTab?: AdminTab } = {}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#f0ece5]">
-                  {products.map((p) => (
-                    <tr key={p.id} className="hover:bg-[#faf9f6]">
-                      <td className="p-3">
-                        <div className="font-bold text-[#080808]">{p.name}</div>
-                        <div className="text-[11px] text-[#777777] line-clamp-1">{p.description}</div>
-                      </td>
-                      <td className="p-3 text-[11px] text-[#555555]">{p.sku}</td>
-                      <td className="p-3 text-[11px]">
-                        <select
-                          value={p.category?.id || p.categoryId || ''}
-                          onChange={(e) => handleUpdateProductCategory(p.id, Number(e.target.value))}
-                          className="px-2 py-1 bg-white border border-[#d5d0c5] rounded text-[11px] font-medium text-[#080808] hover:border-[#080808] focus:outline-none"
-                          title="Assign or reassign product category"
-                        >
-                          {DEMO_CATEGORIES.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="p-3 font-extrabold text-[#080808]">
-                        ₹{(p.price ?? 0).toLocaleString()}
-                        {p.compareAtPrice && p.compareAtPrice > p.price && (
-                          <span className="block text-[10px] text-[#888888] line-through font-normal">
-                            ₹{(p.compareAtPrice ?? 0).toLocaleString()}
+                  {products.map((p) => {
+                    const isArchived = p.status === 'ARCHIVED' || !p.isActive;
+                    return (
+                      <tr key={p.id} className="hover:bg-[#faf9f6]">
+                        <td className="p-3">
+                          <div className="font-bold text-[#080808]">{p.name}</div>
+                          <div className="text-[11px] text-[#777777] line-clamp-1">{p.description}</div>
+                        </td>
+                        <td className="p-3 text-[11px] text-[#555555]">{p.sku}</td>
+                        <td className="p-3 text-[11px]">
+                          <select
+                            value={p.category?.id || p.categoryId || ''}
+                            onChange={(e) => handleUpdateProductCategory(p.id, Number(e.target.value))}
+                            className="px-2 py-1 bg-white border border-[#d5d0c5] rounded text-[11px] font-medium text-[#080808] hover:border-[#080808] focus:outline-none"
+                            title="Assign or reassign product category"
+                          >
+                            {DEMO_CATEGORIES.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-3 font-extrabold text-[#080808]">
+                          ₹{(p.price ?? 0).toLocaleString()}
+                          {p.compareAtPrice && p.compareAtPrice > p.price && (
+                            <span className="block text-[10px] text-[#888888] line-through font-normal">
+                              ₹{(p.compareAtPrice ?? 0).toLocaleString()}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 font-semibold">
+                          <span className={p.stockQuantity < 10 ? 'text-red-700 font-bold' : 'text-[#080808]'}>
+                            {p.stockQuantity} in stock
                           </span>
-                        )}
-                      </td>
-                      <td className="p-3 font-semibold">
-                        <span className={p.stockQuantity < 10 ? 'text-red-700 font-bold' : 'text-[#080808]'}>
-                          {p.stockQuantity} in stock
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                            p.isActive
-                              ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
-                              : 'bg-gray-100 text-gray-700'
-                          }`}
-                        >
-                          {p.isActive ? 'ACTIVE' : 'INACTIVE'}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <button
-                          onClick={() => handleToggleProduct(p.id)}
-                          className="px-2.5 py-1 border border-[#ccc] rounded text-[11px] font-semibold text-[#555555] hover:border-[#080808]"
-                        >
-                          {p.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              p.status === 'ARCHIVED'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : p.isActive
+                                ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                                : 'bg-gray-100 text-gray-700'
+                            }`}
+                          >
+                            {p.status || (p.isActive ? 'ACTIVE' : 'INACTIVE')}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {p.status === 'ARCHIVED' ? (
+                              <button
+                                onClick={() => handleRestoreProduct(p.id)}
+                                className="px-2 py-1 bg-emerald-50 border border-emerald-300 rounded text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+                                title="Restore product to live storefront"
+                              >
+                                Restore
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleArchiveProduct(p.id)}
+                                className="px-2 py-1 bg-amber-50 border border-amber-300 rounded text-[11px] font-semibold text-amber-800 hover:bg-amber-100"
+                                title="Safely unlist and archive from storefront"
+                              >
+                                Archive
+                              </button>
+                            )}
+                            <Link
+                              href={`/admin/products`}
+                              className="px-2 py-1 border border-red-200 rounded text-[11px] font-semibold text-red-700 hover:bg-red-50 hover:border-red-300"
+                              title="Open Product Manager for permanent deletion"
+                            >
+                              Delete
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

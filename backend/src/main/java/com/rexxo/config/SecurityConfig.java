@@ -114,6 +114,9 @@ public class SecurityConfig {
         if (!patterns.contains("http://127.0.0.1:*")) patterns.add("http://127.0.0.1:*");
         if (!patterns.contains("https://*.vercel.app")) patterns.add("https://*.vercel.app");
         if (!patterns.contains("https://*.onrender.com")) patterns.add("https://*.onrender.com");
+        if (!patterns.contains("https://rexxzo.com")) patterns.add("https://rexxzo.com");
+        if (!patterns.contains("https://www.rexxzo.com")) patterns.add("https://www.rexxzo.com");
+        if (!patterns.contains("https://*.rexxzo.com")) patterns.add("https://*.rexxzo.com");
 
         config.setAllowedOriginPatterns(patterns);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));

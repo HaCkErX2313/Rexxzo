@@ -79,6 +79,9 @@ public class OrderController {
         BigDecimal subtotal = BigDecimal.ZERO;
         for (CartItem ci : cart.getItems()) {
             Product p = ci.getProduct();
+            if (!Boolean.TRUE.equals(p.getIsActive()) || "ARCHIVED".equalsIgnoreCase(p.getStatus())) {
+                throw RexxoException.badRequest("Product is no longer available for purchase: " + p.getName());
+            }
             if (p.getStock() < ci.getQuantity()) {
                 throw RexxoException.badRequest("Insufficient stock for: " + p.getName());
             }

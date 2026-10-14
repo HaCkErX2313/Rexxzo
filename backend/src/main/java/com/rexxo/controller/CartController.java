@@ -44,8 +44,11 @@ public class CartController {
             .orElseThrow(() -> RexxoException.notFound("Cart not found"));
 
         Product product = productRepository.findById(request.productId())
-            .filter(Product::getIsActive)
-            .orElseThrow(() -> RexxoException.notFound("Product not found or is currently unavailable"));
+            .orElseThrow(() -> RexxoException.notFound("Product not found"));
+
+        if (!Boolean.TRUE.equals(product.getIsActive()) || "ARCHIVED".equalsIgnoreCase(product.getStatus())) {
+            throw RexxoException.badRequest("This product is archived or unavailable for purchase");
+        }
 
         CartItem item = cartItemRepository.findByCartIdAndProductId(cart.getId(), product.getId())
             .orElseGet(() -> CartItem.builder()
@@ -88,7 +91,7 @@ public class CartController {
             cartItemRepository.delete(item);
         } else {
             Product product = item.getProduct();
-            if (!Boolean.TRUE.equals(product.getIsActive())) {
+            if (!Boolean.TRUE.equals(product.getIsActive()) || "ARCHIVED".equalsIgnoreCase(product.getStatus())) {
                 throw RexxoException.badRequest("Product is no longer available.");
             }
             if (product.getStock() < qty) {
