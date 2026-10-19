@@ -81,16 +81,25 @@ public class AdminShippingController {
     @PostMapping("/orders/{orderId}/create-shipment")
     public ResponseEntity<ShippingDtos.CreateShipmentResponse> createShipment(
             @PathVariable Long orderId,
-            @RequestBody CreateShipmentBody body) {
+            @RequestBody(required = false) CreateShipmentBody body) {
 
         Order order = orderRepository.findById(orderId)
             .orElseThrow(() -> RexxoException.notFound("Order not found: " + orderId));
 
+        String paymentMode = body != null ? body.paymentMode() : null;
+        if (paymentMode == null || paymentMode.isBlank()) {
+            paymentMode = "COD".equalsIgnoreCase(order.getPaymentMethod()) ? "COD" : "PREPAID";
+        }
+        BigDecimal codAmount = (body != null && body.codAmount() != null)
+            ? body.codAmount()
+            : ("COD".equalsIgnoreCase(paymentMode) ? order.getTotal() : BigDecimal.ZERO);
+        Integer courierId = body != null ? body.courierId() : null;
+
         ShippingDtos.CreateShipmentRequest req = ShippingDtos.CreateShipmentRequest.builder()
             .orderId(orderId)
-            .paymentMode(body.paymentMode())
-            .courierId(body.courierId())
-            .codAmount(body.codAmount())
+            .paymentMode(paymentMode)
+            .courierId(courierId)
+            .codAmount(codAmount)
             .build();
 
         ShippingDtos.CreateShipmentResponse response = shiprocketService.createShipment(req);
@@ -174,6 +183,8 @@ public class AdminShippingController {
             shipment.getTrackingUrl(),
             shipment.getPickupPincode(),
             shipment.getDeliveryPincode(),
+            shipment.getAttemptCount() != null ? shipment.getAttemptCount() : 0,
+            shipment.getLastAttemptAt() != null ? shipment.getLastAttemptAt().toString() : null,
             shipment.getCreatedAt() != null ? shipment.getCreatedAt().toString() : null,
             shipment.getFailureReason()
         ));
@@ -202,6 +213,8 @@ public class AdminShippingController {
         String trackingUrl,
         String pickupPincode,
         String deliveryPincode,
+        Integer attemptCount,
+        String lastAttemptAt,
         String createdAt,
         String failureReason
     ) {}

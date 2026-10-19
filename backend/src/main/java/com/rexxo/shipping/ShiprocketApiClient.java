@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Component
 @Slf4j
-public class ShiprocketApiClient {
+public class ShiprocketApiClient implements ShiprocketClient {
 
     // 240 hours minus 1 hour safety buffer, in seconds
     private static final long TOKEN_VALIDITY_SECONDS = (240 - 1) * 3600L;
@@ -210,7 +210,7 @@ public class ShiprocketApiClient {
                         .map(body -> new ShiprocketTokenExpiredException("Token expired or invalid")))
                 .onStatus(HttpStatusCode::isError, response ->
                     response.bodyToMono(String.class)
-                        .map(body -> new ShiprocketException("GET " + path + " failed: " + body)))
+                        .map(body -> new ShiprocketException("GET " + path + " failed (HTTP " + response.statusCode().value() + "): " + extractErrorMessage(body))))
                 .bodyToMono(String.class)
                 .block();
         });
@@ -235,7 +235,7 @@ public class ShiprocketApiClient {
                         .map(body -> new ShiprocketTokenExpiredException("Token expired or invalid")))
                 .onStatus(HttpStatusCode::isError, response ->
                     response.bodyToMono(String.class)
-                        .map(body -> new ShiprocketException("POST " + path + " failed: " + body)))
+                        .map(body -> new ShiprocketException("POST " + path + " failed (HTTP " + response.statusCode().value() + "): " + extractErrorMessage(body))))
                 .bodyToMono(String.class)
                 .block();
         });

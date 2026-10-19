@@ -47,6 +47,9 @@ public class ShipmentTrackingScheduler {
         for (Shipment shipment : activeShipments) {
             try {
                 shiprocketService.syncTrackingFromProvider(shipment);
+            } catch (ShiprocketApiClient.ShiprocketException e) {
+                log.warn("Tracking sync stopped due to Shiprocket API error: {}", e.getMessage());
+                break; // Stop immediately to prevent account locking or rate limiting
             } catch (Exception e) {
                 log.warn("Tracking sync failed for shipment {}: {}", shipment.getId(), e.getMessage());
                 // Continue with next shipment — don't let one failure stop others

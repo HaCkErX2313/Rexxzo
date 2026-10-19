@@ -27,7 +27,7 @@ import java.util.*;
 @Slf4j
 public class ShiprocketService implements LogisticsService {
 
-    private final ShiprocketApiClient apiClient;
+    private final ShiprocketClient apiClient;
     private final ShiprocketConfig config;
     private final OrderRepository orderRepository;
     private final ShipmentRepository shipmentRepository;
@@ -128,57 +128,125 @@ public class ShiprocketService implements LogisticsService {
         Order order = orderRepository.findById(req.getOrderId())
             .orElseThrow(() -> new RuntimeException("Order not found: " + req.getOrderId()));
 
-        // Idempotency: check if shipment already exists and is not failed
+        // Resolve payment mode and COD amount from request or persisted order
+        String paymentMode = req.getPaymentMode();
+        if (paymentMode == null || paymentMode.isBlank()) {
+            paymentMode = "COD".equalsIgnoreCase(order.getPaymentMethod()) ? "COD" : "PREPAID";
+        }
+        boolean isCod = "COD".equalsIgnoreCase(paymentMode);
+        BigDecimal codAmount = isCod
+            ? (req.getCodAmount() != null ? req.getCodAmount() : order.getTotal())
+            : BigDecimal.ZERO;
+
+        // Idempotency: check if shipment already exists with a valid providerOrderId
         Optional<Shipment> existing = shipmentRepository.findByOrderId(req.getOrderId());
         if (existing.isPresent()) {
             Shipment s = existing.get();
-            if (s.getShipmentStatus() != Shipment.ShipmentStatus.CREATION_PENDING
-                && s.getShipmentStatus() != Shipment.ShipmentStatus.FAILED) {
-                log.warn("Shipment already exists for order {} with status {}",
-                    req.getOrderId(), s.getShipmentStatus());
+            if (s.getProviderOrderId() != null && !s.getProviderOrderId().isBlank()) {
+                log.info("Shipment already exists for order {} with providerOrderId {}",
+                    order.getOrderNumber(), s.getProviderOrderId());
                 return ShippingDtos.CreateShipmentResponse.builder()
                     .success(true)
                     .providerOrderId(s.getProviderOrderId())
                     .providerShipmentId(s.getProviderShipmentId())
                     .awbNumber(s.getAwbNumber())
                     .courierName(s.getCourierName())
+                    .courierId(s.getCourierId())
+                    .trackingUrl(s.getTrackingUrl())
                     .message("Shipment already exists")
                     .build();
             }
         }
 
-        // Save/update shipment record (status = CREATION_PENDING initially)
-        Shipment shipment = existing.orElse(Shipment.builder()
+        // Initialize / update shipment record
+        Shipment shipment = existing.orElseGet(() -> Shipment.builder()
             .order(order)
             .provider("SHIPROCKET")
             .pickupPincode(config.getPickupPincode())
             .deliveryPincode(order.getShippingPincode())
             .build());
 
-        // Calculate package dimensions from order items
+        shipment.setAttemptCount((shipment.getAttemptCount() != null ? shipment.getAttemptCount() : 0) + 1);
+        shipment.setLastAttemptAt(LocalDateTime.now());
+        shipment.setPaymentMode(isCod ? Shipment.PaymentMode.COD : Shipment.PaymentMode.PREPAID);
+        shipment.setCodAmount(codAmount);
+        shipment.setShipmentStatus(Shipment.ShipmentStatus.CREATION_PENDING);
+        shipmentRepository.save(shipment);
+
+        // Fail-safe check for credentials
+        if (!config.isConfigured()) {
+            String errorMsg = "Shiprocket credentials are not configured. Configure SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD in Render backend environment variables.";
+            log.warn("Cannot create Shiprocket order for {}: {}", order.getOrderNumber(), errorMsg);
+            shipment.setShipmentStatus(Shipment.ShipmentStatus.FAILED);
+            shipment.setFailureReason(errorMsg);
+            shipmentRepository.save(shipment);
+            return ShippingDtos.CreateShipmentResponse.builder()
+                .success(false)
+                .message(errorMsg)
+                .build();
+        }
+
+        // Calculate package dimensions
         PackageDimensions dims = calculatePackageDimensions(order);
         shipment.setWeightGrams(dims.weightGrams);
         shipment.setLengthCm(dims.lengthCm);
         shipment.setWidthCm(dims.widthCm);
         shipment.setHeightCm(dims.heightCm);
-        shipment.setPaymentMode("COD".equals(req.getPaymentMode())
-            ? Shipment.PaymentMode.COD : Shipment.PaymentMode.PREPAID);
-        shipment.setCodAmount(req.getCodAmount());
-        shipment.setShipmentStatus(Shipment.ShipmentStatus.CREATION_PENDING);
-        shipmentRepository.save(shipment);
+
+        // Validate payload data before hitting Shiprocket
+        String validationError = validateOrderForShipping(order);
+        if (validationError != null) {
+            log.error("Shipping validation failed for order {}: {}", order.getOrderNumber(), validationError);
+            shipment.setShipmentStatus(Shipment.ShipmentStatus.FAILED);
+            shipment.setFailureReason("Validation error: " + validationError);
+            shipmentRepository.save(shipment);
+            return ShippingDtos.CreateShipmentResponse.builder()
+                .success(false)
+                .message("Shipping validation failed: " + validationError)
+                .build();
+        }
+
+        // Ambiguous retry protection: Check if order already exists in Shiprocket before creating
+        if (shipment.getAttemptCount() > 1) {
+            ReconciliationResult reconciled = reconcileExistingOrderInShiprocket(order.getOrderNumber());
+            if (reconciled != null) {
+                log.info("Shiprocket order previously created for {}: providerOrderId={}, providerShipmentId={}",
+                    order.getOrderNumber(), reconciled.providerOrderId(), reconciled.providerShipmentId());
+                shipment.setProviderOrderId(reconciled.providerOrderId());
+                shipment.setProviderShipmentId(reconciled.providerShipmentId());
+                shipment.setAwbNumber(reconciled.awbNumber());
+                shipment.setCourierName(reconciled.courierName());
+                shipment.setShipmentStatus(Shipment.ShipmentStatus.CREATED);
+                shipment.setFailureReason(null);
+                shipmentRepository.save(shipment);
+
+                order.setShipment(shipment);
+                orderRepository.save(order);
+
+                return ShippingDtos.CreateShipmentResponse.builder()
+                    .success(true)
+                    .providerOrderId(reconciled.providerOrderId())
+                    .providerShipmentId(reconciled.providerShipmentId())
+                    .awbNumber(reconciled.awbNumber())
+                    .courierName(reconciled.courierName())
+                    .message("Shipment reconciled with existing Shiprocket order")
+                    .build();
+            }
+        }
 
         try {
-            // Build the Shiprocket order creation payload
-            Map<String, Object> payload = buildOrderPayload(order, req, dims);
+            // Build the compliant Shiprocket order creation payload
+            Map<String, Object> payload = buildOrderPayload(order, isCod, codAmount, dims);
 
-            log.info("Creating Shiprocket order for REXXZO order {}", order.getOrderNumber());
+            log.info("Creating Shiprocket order for REXXZO order {} (Payment: {}, Pickup: {})",
+                order.getOrderNumber(), isCod ? "COD" : "Prepaid", config.getPickupLocation());
             JsonNode response = apiClient.post("/v1/external/orders/create/adhoc", payload);
 
             String providerOrderId = response.path("order_id").asText("");
             String providerShipmentId = response.path("shipment_id").asText("");
 
             if (providerOrderId.isBlank()) {
-                String errorMessage = response.path("message").asText("Unknown error");
+                String errorMessage = response.path("message").asText("Unknown response from Shiprocket");
                 throw new ShiprocketApiClient.ShiprocketException(
                     "Shiprocket order creation failed: " + errorMessage);
             }
@@ -189,7 +257,10 @@ public class ShiprocketService implements LogisticsService {
             shipment.setFailureReason(null);
             shipmentRepository.save(shipment);
 
-            log.info("Shiprocket order created: providerOrderId={}, providerShipmentId={}",
+            order.setShipment(shipment);
+            orderRepository.save(order);
+
+            log.info("Shiprocket order created successfully: providerOrderId={}, providerShipmentId={}",
                 providerOrderId, providerShipmentId);
 
             // Optionally assign courier if courierId is provided
@@ -219,15 +290,107 @@ public class ShiprocketService implements LogisticsService {
         } catch (Exception e) {
             log.error("Failed to create Shiprocket shipment for order {}: {}",
                 order.getOrderNumber(), e.getMessage());
+
+            String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
+
+            // If error indicates the order already exists in Shiprocket, reconcile rather than leaving failed
+            if (errorMsg.toLowerCase().contains("already exist") || errorMsg.toLowerCase().contains("duplicate")) {
+                ReconciliationResult reconciled = reconcileExistingOrderInShiprocket(order.getOrderNumber());
+                if (reconciled != null) {
+                    log.info("Successfully reconciled duplicate order {} with Shiprocket", order.getOrderNumber());
+                    shipment.setProviderOrderId(reconciled.providerOrderId());
+                    shipment.setProviderShipmentId(reconciled.providerShipmentId());
+                    shipment.setAwbNumber(reconciled.awbNumber());
+                    shipment.setCourierName(reconciled.courierName());
+                    shipment.setShipmentStatus(Shipment.ShipmentStatus.CREATED);
+                    shipment.setFailureReason(null);
+                    shipmentRepository.save(shipment);
+
+                    order.setShipment(shipment);
+                    orderRepository.save(order);
+
+                    return ShippingDtos.CreateShipmentResponse.builder()
+                        .success(true)
+                        .providerOrderId(reconciled.providerOrderId())
+                        .providerShipmentId(reconciled.providerShipmentId())
+                        .awbNumber(reconciled.awbNumber())
+                        .courierName(reconciled.courierName())
+                        .message("Shipment reconciled with existing Shiprocket order")
+                        .build();
+                }
+            }
+
             shipment.setShipmentStatus(Shipment.ShipmentStatus.FAILED);
-            shipment.setFailureReason(e.getMessage());
+            shipment.setFailureReason(errorMsg);
             shipmentRepository.save(shipment);
 
             return ShippingDtos.CreateShipmentResponse.builder()
                 .success(false)
-                .message("Shipment creation failed: " + e.getMessage())
+                .message("Shipment creation failed: " + errorMsg)
                 .build();
         }
+    }
+
+    private record ReconciliationResult(String providerOrderId, String providerShipmentId, String awbNumber, String courierName) {}
+
+    private ReconciliationResult reconcileExistingOrderInShiprocket(String orderNumber) {
+        if (!config.isConfigured() || orderNumber == null || orderNumber.isBlank()) return null;
+        try {
+            Map<String, String> query = Map.of("search", orderNumber);
+            JsonNode response = apiClient.get("/v1/external/orders", query);
+            JsonNode data = response.path("data");
+            if (data.isArray()) {
+                for (JsonNode ordNode : data) {
+                    String channelOrderId = ordNode.path("channel_order_id").asText("");
+                    if (orderNumber.equalsIgnoreCase(channelOrderId)) {
+                        String provOrdId = ordNode.path("id").asText("");
+                        String provShipId = "";
+                        String awb = "";
+                        String courier = "";
+                        JsonNode shipmentsNode = ordNode.path("shipments");
+                        if (shipmentsNode.isArray() && shipmentsNode.size() > 0) {
+                            JsonNode firstShip = shipmentsNode.get(0);
+                            provShipId = firstShip.path("id").asText("");
+                            awb = firstShip.path("awb").asText("");
+                            courier = firstShip.path("courier_name").asText("");
+                        }
+                        if (!provOrdId.isBlank()) {
+                            return new ReconciliationResult(provOrdId, provShipId, awb, courier);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Reconciliation query failed for order {}: {}", orderNumber, e.getMessage());
+        }
+        return null;
+    }
+
+    private String validateOrderForShipping(Order order) {
+        if (order.getItems() == null || order.getItems().isEmpty()) {
+            return "Order has no items to ship";
+        }
+        String pincode = sanitizePincode(order.getShippingPincode());
+        if (pincode == null || pincode.length() != 6) {
+            return "Invalid shipping pincode (must be a valid 6-digit Indian pincode): " + order.getShippingPincode();
+        }
+        if (order.getShippingAddress() == null || order.getShippingAddress().trim().isBlank()) {
+            return "Missing delivery street address";
+        }
+        if (order.getShippingCity() == null || order.getShippingCity().trim().isBlank()) {
+            return "Missing delivery city";
+        }
+        if (order.getShippingState() == null || order.getShippingState().trim().isBlank()) {
+            return "Missing delivery state";
+        }
+        String phone = sanitizePhone(order.getShippingPhone());
+        if (phone == null || phone.length() != 10) {
+            return "Invalid customer phone number (must be a valid 10-digit number): " + order.getShippingPhone();
+        }
+        if (config.getPickupLocation() == null || config.getPickupLocation().trim().isBlank()) {
+            return "Shiprocket pickup location nickname is not configured";
+        }
+        return null;
     }
 
     private AwbResult assignAwb(Shipment shipment, String providerShipmentId, int courierId) {
@@ -266,7 +429,7 @@ public class ShiprocketService implements LogisticsService {
     private record AwbResult(String awb, String courierName, String trackingUrl) {}
 
     private String sanitizePhone(String phone) {
-        if (phone == null || phone.isBlank()) return "9999999999";
+        if (phone == null || phone.isBlank()) return null;
         String digits = phone.replaceAll("[^0-9]", "");
         if (digits.length() == 12 && digits.startsWith("91")) {
             digits = digits.substring(2);
@@ -276,10 +439,16 @@ public class ShiprocketService implements LogisticsService {
         if (digits.length() > 10) {
             digits = digits.substring(digits.length() - 10);
         }
-        return digits.length() == 10 ? digits : "9999999999";
+        return digits.length() == 10 ? digits : null;
     }
 
-    private Map<String, Object> buildOrderPayload(Order order, ShippingDtos.CreateShipmentRequest req,
+    private String sanitizePincode(String pincode) {
+        if (pincode == null || pincode.isBlank()) return null;
+        String digits = pincode.replaceAll("[^0-9]", "");
+        return digits.length() == 6 ? digits : null;
+    }
+
+    private Map<String, Object> buildOrderPayload(Order order, boolean isCod, BigDecimal codAmount,
                                                    PackageDimensions dims) {
         Map<String, Object> payload = new LinkedHashMap<>();
 
@@ -288,41 +457,59 @@ public class ShiprocketService implements LogisticsService {
         payload.put("order_date", createdAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
         payload.put("pickup_location", config.getPickupLocation());
 
-        String customerName = (order.getShippingName() != null && !order.getShippingName().isBlank())
-            ? order.getShippingName() : "Valued Customer";
+        String rawName = (order.getShippingName() != null && !order.getShippingName().trim().isBlank())
+            ? order.getShippingName().trim() : "Valued Customer";
+
+        String firstName = rawName;
+        String lastName = ".";
+        if (rawName.contains(" ")) {
+            int idx = rawName.lastIndexOf(" ");
+            firstName = rawName.substring(0, idx).trim();
+            lastName = rawName.substring(idx + 1).trim();
+            if (lastName.isBlank()) lastName = ".";
+        }
+
         String customerPhone = sanitizePhone(order.getShippingPhone());
         String customerEmail = (order.getUser() != null && order.getUser().getEmail() != null)
             ? order.getUser().getEmail() : "orders@rexxzo.com";
-        String shippingAddress = (order.getShippingAddress() != null && !order.getShippingAddress().isBlank())
-            ? order.getShippingAddress() : "Address on file";
+        String shippingAddress = order.getShippingAddress() != null ? order.getShippingAddress().trim() : "";
+        String city = order.getShippingCity() != null ? order.getShippingCity().trim() : "";
+        String state = order.getShippingState() != null ? order.getShippingState().trim() : "";
+        String pincode = sanitizePincode(order.getShippingPincode());
 
         // Billing = Shipping for B2C
-        payload.put("billing_customer_name", customerName);
+        payload.put("billing_customer_name", firstName);
+        payload.put("billing_last_name", lastName);
         payload.put("billing_address", shippingAddress);
-        payload.put("billing_city", order.getShippingCity());
-        payload.put("billing_pincode", order.getShippingPincode());
-        payload.put("billing_state", order.getShippingState());
+        payload.put("billing_city", city);
+        payload.put("billing_pincode", pincode);
+        payload.put("billing_state", state);
         payload.put("billing_country", "India");
         payload.put("billing_email", customerEmail);
         payload.put("billing_phone", customerPhone);
 
         payload.put("shipping_is_billing", true);
-        payload.put("shipping_customer_name", customerName);
+        payload.put("shipping_customer_name", firstName);
+        payload.put("shipping_last_name", lastName);
         payload.put("shipping_address", shippingAddress);
-        payload.put("shipping_city", order.getShippingCity());
-        payload.put("shipping_pincode", order.getShippingPincode());
-        payload.put("shipping_state", order.getShippingState());
+        payload.put("shipping_city", city);
+        payload.put("shipping_pincode", pincode);
+        payload.put("shipping_state", state);
         payload.put("shipping_country", "India");
         payload.put("shipping_email", customerEmail);
         payload.put("shipping_phone", customerPhone);
 
-        // Payment
-        payload.put("payment_method", "COD".equals(req.getPaymentMode()) ? "COD" : "Prepaid");
-        if ("COD".equals(req.getPaymentMode()) && req.getCodAmount() != null) {
-            payload.put("sub_total", req.getCodAmount().toPlainString());
-        } else {
-            payload.put("sub_total", order.getTotal().toPlainString());
-        }
+        // Payment Mode: "COD" or "Prepaid"
+        payload.put("payment_method", isCod ? "COD" : "Prepaid");
+
+        // Subtotal, shipping charge, discount
+        BigDecimal subtotal = order.getSubtotal() != null ? order.getSubtotal() : BigDecimal.ZERO;
+        BigDecimal shippingFee = order.getShippingFee() != null ? order.getShippingFee() : BigDecimal.ZERO;
+        BigDecimal discount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO;
+
+        payload.put("sub_total", subtotal.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        payload.put("shipping_charges", shippingFee.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        payload.put("total_discount", discount.setScale(2, RoundingMode.HALF_UP).toPlainString());
 
         // Order items
         List<Map<String, Object>> orderItems = new ArrayList<>();
@@ -331,22 +518,25 @@ public class ShiprocketService implements LogisticsService {
             String itemName = item.getProductName() != null && !item.getProductName().isBlank()
                 ? item.getProductName() : "REXXZO Item";
             String sku = (item.getProduct() != null && item.getProduct().getSku() != null && !item.getProduct().getSku().isBlank())
-                ? item.getProduct().getSku() : ("SKU-" + (item.getId() != null ? item.getId() : System.currentTimeMillis()));
+                ? item.getProduct().getSku() : ("SKU-" + (item.getProduct() != null ? item.getProduct().getId() : item.getId()));
             oi.put("name", itemName);
             oi.put("sku", sku);
             oi.put("units", item.getQuantity() != null && item.getQuantity() > 0 ? item.getQuantity() : 1);
-            oi.put("selling_price", item.getUnitPrice() != null ? item.getUnitPrice().toPlainString() : "0.00");
+            oi.put("selling_price", item.getUnitPrice() != null
+                ? item.getUnitPrice().setScale(2, RoundingMode.HALF_UP).toPlainString() : "0.00");
+            oi.put("discount", "0.00");
+            oi.put("tax", "0.00");
             orderItems.add(oi);
         }
         payload.put("order_items", orderItems);
 
-        // Package dimensions (weight in kg for Shiprocket, dims in cm)
+        // Package dimensions (weight in kg with dot decimal format, dims in cm)
         double weightKg = Math.max(dims.weightGrams / 1000.0, 0.1);
         BigDecimal length = dims.lengthCm.max(new BigDecimal("5"));
         BigDecimal width = dims.widthCm.max(new BigDecimal("5"));
         BigDecimal height = dims.heightCm.max(new BigDecimal("5"));
 
-        payload.put("weight", String.format("%.3f", weightKg));
+        payload.put("weight", String.format(Locale.ROOT, "%.3f", weightKg));
         payload.put("length", length.toPlainString());
         payload.put("breadth", width.toPlainString());
         payload.put("height", height.toPlainString());
@@ -441,6 +631,10 @@ public class ShiprocketService implements LogisticsService {
         try {
             Map<String, String> params = Map.of("awb", shipment.getAwbNumber());
             JsonNode response = apiClient.get("/v1/external/courier/track/awb/" + shipment.getAwbNumber(), null);
+            if (response == null) {
+                log.debug("No response from provider for AWB {}", shipment.getAwbNumber());
+                return;
+            }
 
             JsonNode trackingData = response.path("tracking_data");
             if (trackingData.isMissingNode()) {

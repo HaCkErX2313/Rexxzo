@@ -106,6 +106,13 @@ public class Shipment {
     @Column(name = "failure_reason", columnDefinition = "TEXT")
     private String failureReason;
 
+    @Column(name = "attempt_count")
+    @Builder.Default
+    private Integer attemptCount = 0;
+
+    @Column(name = "last_attempt_at")
+    private LocalDateTime lastAttemptAt;
+
     @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("eventTimestamp ASC")
     @Builder.Default
