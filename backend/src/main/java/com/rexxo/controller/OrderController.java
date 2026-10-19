@@ -72,10 +72,32 @@ public class OrderController {
         pincodeService.validatePincodeAndState(request.shippingPincode(), request.shippingState());
 
         Cart cart = cartRepository.findByUserIdWithItems(user.getId())
-            .orElseThrow(() -> RexxoException.notFound("Cart not found"));
+            .orElseGet(() -> {
+                Cart newCart = Cart.builder().user(user).build();
+                return cartRepository.save(newCart);
+            });
+
+        // If database cart is empty, synchronize items from the request payload
+        if (cart.getItems().isEmpty() && request.items() != null && !request.items().isEmpty()) {
+            for (CartItemInput input : request.items()) {
+                if (input.productId() == null) continue;
+                Product p = productRepository.findById(input.productId()).orElse(null);
+                if (p != null) {
+                    int qty = input.quantity() != null && input.quantity() > 0 ? input.quantity() : 1;
+                    CartItem ci = CartItem.builder()
+                        .cart(cart)
+                        .product(p)
+                        .unitPrice(p.getPrice())
+                        .quantity(qty)
+                        .build();
+                    cart.getItems().add(ci);
+                    cartItemRepository.save(ci);
+                }
+            }
+        }
 
         if (cart.getItems().isEmpty()) {
-            throw RexxoException.badRequest("Cart is empty");
+            throw RexxoException.badRequest("Cart is empty. Please add items to your cart before proceeding.");
         }
 
         // Validate stock and compute subtotal
@@ -294,6 +316,8 @@ public class OrderController {
         BigDecimal unitPrice, Integer quantity, BigDecimal subtotal
     ) {}
 
+    public record CartItemInput(Long productId, Integer quantity) {}
+
     public record PlaceOrderRequest(
         @NotBlank String shippingName,
         @NotBlank String shippingPhone,
@@ -302,6 +326,7 @@ public class OrderController {
         @NotBlank String shippingState,
         @NotBlank String shippingPincode,
         String couponCode,
-        String paymentMethod
+        String paymentMethod,
+        List<CartItemInput> items
     ) {}
 }

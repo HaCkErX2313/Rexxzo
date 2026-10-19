@@ -72,8 +72,10 @@ export default function RegisterPage() {
       login(data.token, data.user);
 
       // Redirect after showing success confirmation
+      const redirectParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('redirect') : null;
+      const target = (redirectParam && redirectParam.startsWith('/')) ? redirectParam : '/account';
       setTimeout(() => {
-        router.push('/account');
+        router.push(target);
       }, 1200);
     } catch (err: unknown) {
       if (err instanceof Error) {

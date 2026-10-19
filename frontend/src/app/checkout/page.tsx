@@ -93,6 +93,13 @@ export default function CheckoutPage() {
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Preload Razorpay Standard Checkout SDK on mount
+  useEffect(() => {
+    loadRazorpay().catch((err) => {
+      console.warn('Preloading Razorpay SDK failed:', err);
+    });
+  }, []);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -262,8 +269,22 @@ export default function CheckoutPage() {
     setIsProcessing(true);
 
     try {
+      // 1. Require customer authentication before placing order
+      if (!user && (typeof window !== 'undefined' && !localStorage.getItem('rexxo_token'))) {
+        setSubmitError('Please sign in or create an account to complete your order.');
+        setIsProcessing(false);
+        router.push('/login?redirect=/checkout');
+        return;
+      }
+
+      // Prepare order items from cart for synchronization
+      const orderItemsPayload = cart.items.map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+      }));
+
       if (formData.paymentMethod === 'ONLINE') {
-        // 1. Create order on backend with PENDING_PAYMENT status
+        // 2. Create order on backend with PENDING_PAYMENT status and cart items
         const order = await api.placeOrder({
           shippingName: formData.name,
           shippingPhone: formData.phone,
@@ -271,19 +292,25 @@ export default function CheckoutPage() {
           shippingCity: formData.city,
           shippingState: formData.state,
           shippingPincode: formData.postalCode,
+          shippingEmail: formData.email,
           paymentMethod: 'ONLINE',
+          items: orderItemsPayload,
         });
 
-        // 2. Initialize Razorpay payment order on backend
+        // 3. Initialize Razorpay payment order on backend
         const rzpOrder = await api.createRazorpayOrder(order.id);
 
-        // 3. Ensure Razorpay Standard Checkout SDK is loaded
-        const isLoaded = await loadRazorpay();
-        if (!isLoaded) {
-          throw new Error('Unable to load Razorpay payment gateway. Please check your internet connection.');
+        if (!rzpOrder.keyId || rzpOrder.keyId.trim() === '' || rzpOrder.razorpayOrderId.startsWith('order_mock_')) {
+          throw new Error('Online payment gateway is temporarily unconfigured on this environment. Please choose Cash on Delivery (COD) to place your order.');
         }
 
-        // 4. Open Razorpay Standard Checkout Modal
+        // 4. Ensure Razorpay Standard Checkout SDK is loaded
+        const isLoaded = await loadRazorpay();
+        if (!isLoaded || !window.Razorpay) {
+          throw new Error('Unable to load Razorpay payment gateway. Please check your internet connection and try again.');
+        }
+
+        // 5. Open Razorpay Standard Checkout Modal
         const rzp = new window.Razorpay({
           key: rzpOrder.keyId,
           amount: rzpOrder.amountPaisa,
@@ -303,7 +330,7 @@ export default function CheckoutPage() {
             ondismiss: () => {
               setIsProcessing(false);
               setSubmitError(
-                'Payment was not completed. Your order has been saved, and you can retry paying whenever you are ready.'
+                'Payment window closed. Your order details have been saved, and you can click "Proceed to Pay" to reopen payment or select Cash on Delivery.'
               );
             },
           },
@@ -352,8 +379,16 @@ export default function CheckoutPage() {
           shippingCity: formData.city,
           shippingState: formData.state,
           shippingPincode: formData.postalCode,
+          shippingEmail: formData.email,
           paymentMethod: 'COD',
+          items: orderItemsPayload,
         });
+
+        try {
+          await api.confirmCodPayment(order.id);
+        } catch (codErr) {
+          console.warn('COD status sync note:', codErr);
+        }
 
         if (typeof window !== 'undefined') {
           localStorage.removeItem('rexxo_cart');
@@ -436,6 +471,29 @@ export default function CheckoutPage() {
         <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg flex items-center gap-2">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           <span>{submitError}</span>
+        </div>
+      )}
+
+      {!user && (
+        <div className="mb-6 p-4 bg-[#f9f8f6] border border-[#e5e1d8] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-[#080808]">
+            <ShieldCheck className="w-4 h-4 text-[#8c7f69] flex-shrink-0" />
+            <span>Please sign in or create an account to complete your order and receive live courier tracking.</span>
+          </div>
+          <div className="flex gap-2">
+            <Link
+              href="/login?redirect=/checkout"
+              className="px-4 py-2 bg-[#080808] text-[#C8BCA7] text-[11px] font-bold uppercase tracking-wider rounded hover:bg-[#222222] transition-colors"
+            >
+              Sign In
+            </Link>
+            <Link
+              href="/register?redirect=/checkout"
+              className="px-4 py-2 border border-[#d5d0c5] text-[#080808] text-[11px] font-bold uppercase tracking-wider rounded hover:bg-white transition-colors"
+            >
+              Create Account
+            </Link>
+          </div>
         </div>
       )}
 

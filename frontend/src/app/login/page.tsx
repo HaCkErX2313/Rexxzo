@@ -24,8 +24,11 @@ export default function LoginPage() {
     try {
       const data = await api.login(email, password);
       login(data.token, data.user);
+      const redirectParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('redirect') : null;
       if (data.user.role === 'ADMIN') {
         router.push('/admin');
+      } else if (redirectParam && redirectParam.startsWith('/')) {
+        router.push(redirectParam);
       } else {
         router.push('/account');
       }

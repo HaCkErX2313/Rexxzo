@@ -684,6 +684,7 @@ export const api = {
       shippingPincode: orderData.shippingPincode || orderData.shippingAddress?.postalCode || orderData.postalCode || '',
       couponCode: orderData.couponCode || null,
       paymentMethod: orderData.paymentMethod === 'ONLINE' ? 'PREPAID' : (orderData.paymentMethod || 'PREPAID'),
+      items: orderData.items || undefined,
     };
 
     const res = await fetch(`${API_BASE_URL}/orders`, {
@@ -1630,62 +1631,16 @@ export const shippingApi = {
   },
 
   /**
-   * Create a Razorpay payment order for the given REXXZO order.
-   * Returns razorpayOrderId and key for the Razorpay checkout modal.
+   * Consolidated payment operations delegating to canonical api methods.
    */
-  async createRazorpayOrder(orderId: number): Promise<{
-    razorpayOrderId: string;
-    amountPaisa: number;
-    currency: string;
-    keyId: string;
-  }> {
-    const res = await fetch(`${API_BASE_URL}/payments/create-order`, {
-      method: 'POST',
-      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to initialize payment');
-    }
-    return res.json();
+  createRazorpayOrder(orderId: number) {
+    return api.createRazorpayOrder(orderId);
   },
-
-  /**
-   * Verify Razorpay payment signature on the backend.
-   * This is the ONLY way an order gets marked as PAID.
-   */
-  async verifyPayment(params: {
-    razorpayOrderId: string;
-    razorpayPaymentId: string;
-    razorpaySignature: string;
-  }): Promise<{ success: boolean; orderNumber: string; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/payments/verify`, {
-      method: 'POST',
-      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Payment verification failed');
-    }
-    return res.json();
+  verifyPayment(params: { razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) {
+    return api.verifyPayment(params);
   },
-
-  /**
-   * Confirm a COD order. No payment collected — courier collects on delivery.
-   */
-  async confirmCodOrder(orderId: number): Promise<{ success: boolean; orderNumber: string; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/payments/confirm-cod`, {
-      method: 'POST',
-      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'COD confirmation failed');
-    }
-    return res.json();
+  confirmCodOrder(orderId: number) {
+    return api.confirmCodPayment(orderId);
   },
 };
 

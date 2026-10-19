@@ -92,6 +92,9 @@ public class PaymentController {
             .setScale(0, RoundingMode.HALF_UP)
             .longValue();
 
+        String effectiveKeyId = getEffectiveKeyId();
+        String effectiveKeySecret = getEffectiveKeySecret();
+
         // Check if Razorpay order was already created for this order (Idempotency)
         Payment existingPayment = paymentRepository.findByOrderId(order.getId()).orElse(null);
         if (existingPayment != null && existingPayment.getRazorpayOrderId() != null) {
@@ -99,14 +102,14 @@ public class PaymentController {
                 existingPayment.getRazorpayOrderId(),
                 amountPaisa,
                 "INR",
-                razorpayKeyId
+                effectiveKeyId
             ));
         }
 
         String razorpayOrderId;
         if (isRazorpayConfigured()) {
             try {
-                RazorpayClient razorpay = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
+                RazorpayClient razorpay = new RazorpayClient(effectiveKeyId, effectiveKeySecret);
 
                 JSONObject orderRequest = new JSONObject();
                 orderRequest.put("amount", amountPaisa);
@@ -138,7 +141,7 @@ public class PaymentController {
             razorpayOrderId,
             amountPaisa,
             "INR",
-            razorpayKeyId
+            effectiveKeyId
         ));
     }
 
@@ -440,14 +443,15 @@ public class PaymentController {
 
     private boolean verifyRazorpaySignature(String razorpayOrderId, String razorpayPaymentId,
                                              String signature) {
-        if (signature == null || razorpayKeySecret == null) {
+        String secret = getEffectiveKeySecret();
+        if (signature == null || secret.isBlank()) {
             return false;
         }
         try {
             String payload = razorpayOrderId + "|" + razorpayPaymentId;
             Mac mac = Mac.getInstance("HmacSHA256");
             SecretKeySpec secretKeySpec = new SecretKeySpec(
-                razorpayKeySecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+                secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
             mac.init(secretKeySpec);
             byte[] hash = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
             StringBuilder hexString = new StringBuilder();
@@ -488,11 +492,19 @@ public class PaymentController {
         }
     }
 
+    private String getEffectiveKeyId() {
+        return razorpayKeyId != null ? razorpayKeyId.trim() : "";
+    }
+
+    private String getEffectiveKeySecret() {
+        return razorpayKeySecret != null ? razorpayKeySecret.trim() : "";
+    }
+
     private boolean isRazorpayConfigured() {
-        return razorpayKeyId != null && !razorpayKeyId.isBlank()
-            && !razorpayKeyId.contains("placeholder")
-            && razorpayKeySecret != null && !razorpayKeySecret.isBlank()
-            && !razorpayKeySecret.contains("placeholder");
+        String key = getEffectiveKeyId();
+        String secret = getEffectiveKeySecret();
+        return !key.isBlank() && !key.toLowerCase().contains("placeholder")
+            && !secret.isBlank() && !secret.toLowerCase().contains("placeholder");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
